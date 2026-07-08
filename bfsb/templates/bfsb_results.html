@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{QUERY}} — BFSB</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* TOP BAR */
+  .topbar {
+    background: transparent;
+    border-bottom: none;
+    padding: 16px 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    width: 100%;
+  }
+
+  .topbar-inner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto 0 clamp(48px, 6vw, 80px);
+    padding: 0 clamp(24px, 4vw, 48px);
+    width: 100%;
+  }
+
+  .logo-small {
+    height: clamp(28px, 4vh, 34px);
+    width: auto;
+    flex-shrink: 0;
+    cursor: pointer;
+    filter: drop-shadow(1px 0 0 white) drop-shadow(-1px 0 0 white) drop-shadow(0 1px 0 white) drop-shadow(0 -1px 0 white);
+  }
+
+  .search-box {
+    flex: 1;
+    max-width: 550px;
+    min-width: 320px;
+    display: flex;
+    align-items: center;
+    background: #1e1e3a;
+    border: 1.5px solid #3a3a5c;
+    border-radius: 40px;
+    padding: 0 20px;
+    transition: all 0.2s ease;
+  }
+  .search-box:focus-within {
+    border-color: #7c6af5;
+    box-shadow: 0 0 0 3px rgba(124,106,245,0.15);
+  }
+  .search-box input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #e8e8f0;
+    font-size: clamp(14px, 2.5vw, 16px);
+    padding: 12px 0;
+    caret-color: #7c6af5;
+  }
+  .search-box input::placeholder { color: #55556a; }
+  .search-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px;
+    color: #7c6af5;
+    display: flex;
+    align-items: center;
+    border-radius: 50%;
+    transition: background 0.2s;
+  }
+  .search-btn:hover { background: rgba(124,106,245,0.15); }
+  .search-btn svg { width: 18px; height: 18px; }
+
+  .topbar-right {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .filter-tab {
+    color: #7070a0;
+    text-decoration: none;
+    font-size: clamp(12px, 2vw, 13px);
+    padding: 8px 14px;
+    border-radius: 20px;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .filter-tab:hover {
+    color: #fff;
+    background: rgba(124,106,245,0.15);
+  }
+  .filter-tab.active {
+    color: #fff;
+    background: #7c6af5;
+  }
+  .filter-tab.active:hover {
+    background: #8c7aff;
+  }
+
+  /* LAYOUT */
+  .layout {
+    display: flex;
+    gap: clamp(32px, 4vw, 48px);
+    max-width: 1200px;
+    margin: 0 auto 0 clamp(48px, 6vw, 80px);
+    padding: clamp(24px, 4vh, 32px) clamp(24px, 4vw, 48px);
+    width: 100%;
+  }
+
+  /* RESULTS */
+  .results-col {
+    flex: 1;
+    min-width: 0;
+    max-width: 720px;
+  }
+
+  .results-count {
+    font-size: clamp(12px, 2.5vw, 13px);
+    color: #55556a;
+    margin-bottom: clamp(16px, 3vh, 24px);
+    letter-spacing: 0.01em;
+  }
+
+  .result-item {
+    margin-bottom: clamp(20px, 3.5vh, 32px);
+    padding-bottom: clamp(20px, 3.5vh, 32px);
+    border-bottom: 1px solid #1e1e38;
+  }
+  .result-item:last-child { border-bottom: none; }
+
+  .result-url {
+    font-size: clamp(11px, 2.2vw, 12px);
+    color: #7070a0;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .result-favicon {
+    width: 16px;
+    height: 16px;
+    border-radius: 2px;
+    background: #3a3a5c;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  .result-title {
+    font-size: clamp(17px, 3vw, 20px);
+    font-weight: 500;
+    color: #e0e0f0;
+    text-decoration: none;
+    line-height: 1.35;
+    display: block;
+    margin-bottom: 6px;
+    transition: color 0.15s;
+  }
+  .result-title:hover { color: #a89cf5; text-decoration: underline; }
+
+  .result-desc {
+    font-size: clamp(14px, 2.5vw, 15px);
+    color: #9898b8;
+    line-height: 1.65;
+  }
+  .result-desc b { color: #c0c0d8; font-weight: 600; }
+
+  .result-sources {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .source-tag {
+    font-size: clamp(10px, 2vw, 11px);
+    color: #55556a;
+    background: #1e1e38;
+    border: 1px solid #2a2a48;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .source-tag:hover { border-color: #7c6af5; color: #a89cf5; }
+
+  /* INFOBOX */
+  .infobox-col {
+    flex: 0 0 280px;
+    min-width: 280px;
+    max-width: 300px;
+  }
+
+  .infobox {
+    background: #1e1e38;
+    border: 1px solid #2a2a48;
+    border-radius: 16px;
+    padding: clamp(20px, 4vw, 24px);
+    position: sticky;
+    top: 100px;
+  }
+  .infobox-title {
+    font-size: clamp(16px, 3vw, 18px);
+    font-weight: 600;
+    color: #e0e0f0;
+    margin-bottom: clamp(12px, 2.5vh, 16px);
+    padding-bottom: clamp(10px, 2vh, 14px);
+    border-bottom: 1px solid #2a2a48;
+  }
+  .infobox-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: clamp(12px, 2.5vw, 13px);
+  }
+  .infobox-key {
+    color: #55556a;
+    min-width: 80px;
+    flex-shrink: 0;
+  }
+  .infobox-val { color: #b8b8d8; }
+
+  .infobox-links {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid #2a2a48;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .infobox-links a {
+    font-size: clamp(11px, 2.2vw, 12px);
+    color: #7c6af5;
+    text-decoration: none;
+    background: rgba(124,106,245,0.08);
+    border-radius: 6px;
+    padding: 4px 10px;
+    transition: background 0.15s;
+  }
+  .infobox-links a:hover { background: rgba(124,106,245,0.2); }
+
+  /* CARD STYLE for special results */
+  .result-card {
+    background: #1e1e38;
+    border: 1px solid #2a2a48;
+    border-radius: 12px;
+    padding: clamp(16px, 3vw, 20px);
+    margin-bottom: clamp(20px, 3.5vh, 28px);
+  }
+  .result-card .result-title { color: #e0e0f0; }
+  .result-card .result-desc { color: #9898b8; }
+
+  /* FOOTER */
+  .footer {
+    padding: clamp(12px, 2.5vh, 16px) clamp(24px, 4vw, 48px);
+    max-width: 1200px;
+    margin: 0 auto;
+    font-size: clamp(11px, 2vw, 12px);
+    color: #404058;
+    border-top: 1px solid #1e1e38;
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .footer-left { color: #404058; }
+  .footer-right { color: #55556a; font-size: clamp(10px, 1.8vw, 11px); }
+  .footer-inner {
+    max-width: 1200px;
+    margin: 0 auto 0 clamp(48px, 6vw, 80px);
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .footer .brand { color: #7c6af5; font-weight: 600; letter-spacing: 0.05em; }
+  .footer .reg { font-size: clamp(9px, 1.8vw, 10px); vertical-align: super; }
+  .status { color: #7c6af5; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="topbar-inner">
+    <img src="/static/bfsb-home-logo.png" alt="BFSB" class="logo-small" />
+
+    <div class="search-box">
+      <input type="text" id="searchInput" value="{{QUERY}}" autocomplete="off" />
+      <button class="search-btn" onclick="doSearch()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="topbar-right">
+      <a href="/search?q={{QUERY}}&filter=all" class="filter-tab active">All</a>
+      <a href="/search?q={{QUERY}}&filter=images" class="filter-tab">Images</a>
+      <a href="/search?q={{QUERY}}&filter=videos" class="filter-tab">Videos</a>
+      <a href="/search?q={{QUERY}}&filter=news" class="filter-tab">News</a>
+      <a href="/search?q={{QUERY}}&filter=maps" class="filter-tab">Maps</a>
+    </div>
+  </div>
+</div>
+
+<!-- RESULTS LAYOUT -->
+<div class="layout">
+  <div class="results-col">
+    <div class="results-count">{{RESULTS_COUNT}} results found</div>
+
+        {{RESULTS_HTML|safe}}
+
+      </div>
+
+  <!-- INFOBOX -->
+  <div class="infobox-col">
+    {{INFOBOX_HTML|safe}}
+  </div>
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="footer-inner">
+    <div class="footer-left">
+      <span class="brand">BFSB<span class="reg">&reg;</span></span> &mdash; Browser For Safe Browsing
+    </div>
+    <div class="footer-right">
+      <span class="status">Ready</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('searchInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') doSearch();
+  });
+  function doSearch() {
+    const q = document.getElementById('searchInput').value.trim();
+    if (q) window.location.href = '/search?q=' + encodeURIComponent(q);
+  }
+</script>
+
+</body>
+</html>

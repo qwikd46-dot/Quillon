@@ -1,0 +1,694 @@
+"""Main application window — BFSB Browser.
+
+Server-backed architecture: local HTTP server serves templates, handles search API.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Optional
+from urllib.parse import quote
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtWidgets import (
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QStackedWidget,
+    QStatusBar,
+)
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+
+from .tabs import TabBar
+from .navigation import NavigationBar
+from .styles import DIMS, STYLES, C, S
+
+from ..core import (
+    create_web_view,
+    URLBlocker,
+    CookieVault,
+    APP_CONFIG,
+    SECURITY_CONFIG,
+    BFSBPage,
+    get_server,
+    shutdown_server,
+    BFSHBServer,
+)
+
+
+class BFSBWindow(QMainWindow):
+    """Main browser window — server-backed with HTML templates."""
+
+    def __init__(self, blocker: URLBlocker) -> None:
+        super().__init__()
+        self._blocker = blocker
+        self._cookie_vault = CookieVault()
+
+        # Server
+        self._server: Optional[BFSHBServer] = None
+        self._server_ready = False
+
+        # UI state
+        self._profile = None
+        self._stack = None
+        self._tab_bar = None
+        self._nav_bar = None
+        self._status_bar = None
+        self._home_view: Optional[QWebEngineView] = None
+        self._views: list[QWebEngineView] = []  # web views for each tab
+
+        self._init_profile()
+        self._init_ui()
+        self._init_server()
+        self.new_tab()  # Start with home page
+
+    def _init_profile(self) -> None:
+        """Initialize WebEngine profile."""
+        from ..core import create_web_profile, configure_web_settings
+        self._profile = create_web_profile()
+        configure_web_settings(self._profile.settings())
+        self._profile.downloadRequested.connect(self._on_download)
+
+    def _init_server(self) -> None:
+        """Initialize and start the local HTTP server."""
+        import threading
+
+        def run_server():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                self._server = loop.run_until_complete(get_server())
+                self._server_ready = True
+                print("[BFSBWindow] Server ready")
+                loop.run_forever()
+            except Exception as e:
+                print(f"[BFSBWindow] Failed to start server: {e}")
+            finally:
+                loop.close()
+
+        self._server_thread = threading.Thread(target=run_server, daemon=True)
+        self._server_thread.start()
+
+        # Wait briefly for server to start
+        import time
+        time.sleep(0.5)
+
+    def _init_ui(self) -> None:
+        """Initialize main UI."""
+        self.setWindowTitle(APP_CONFIG.WINDOW_TITLE)
+        self.resize(APP_CONFIG.WINDOW_WIDTH, APP_CONFIG.WINDOW_HEIGHT)
+
+        # Central widget
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Tab bar
+        self._tab_bar = TabBar(
+            on_tab_switch=self._on_tab_switch,
+            on_tab_close=self._on_tab_close,
+            on_new_tab=self.new_tab,
+        )
+        main_layout.addWidget(self._tab_bar)
+
+        # Navigation bar
+        self._nav_bar = NavigationBar(
+            on_back=self.go_back,
+            on_forward=self.go_forward,
+            on_reload=self.reload,
+            on_navigate=self.navigate,
+        )
+        main_layout.addWidget(self._nav_bar)
+
+        # Stacked widget for web views
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet(f"background: {C.BG_0}; border: none;")
+        main_layout.addWidget(self._stack)
+
+        # Status bar
+        self._status_bar = QStatusBar()
+        self._status_bar.setStyleSheet(f"""
+            QStatusBar {{
+                background: {C.BG_2};
+                color: {C.TEXT_2};
+                font-size: {DIMS.STATUS_FONT_SIZE}px;
+                border-top: 1px solid {C.BORDER_0};
+                padding: 0 {S.SM}px;
+            }}
+        """)
+        self.setStatusBar(self._status_bar)
+        self._update_status()
+
+    def _update_status(self) -> None:
+        """Update status bar message."""
+        self._status_bar.showMessage(
+            f"Ready | {self._blocker.blocked_count:,} threats blocked"
+        )
+
+    def showEvent(self, event) -> None:
+        """Ensure window is raised and activated on Wayland/XWayland."""
+        super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        # Force window mapping on XWayland
+        self.setWindowState(self.windowState() | Qt.WindowState.WindowActive)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # TAB MANAGEMENT
+    # ═════════════════════════════════════════════════════════════════════
+
+    def new_tab(self, url: Optional[str] = None, *args) -> Optional[QWebEngineView]:
+        """Create and add a new tab."""
+        # Handle QPushButton.clicked(bool) signal
+        if isinstance(url, bool):
+            url = None
+        try:
+            index = len(self._views)
+
+            if url is None or url == "about:home":
+                # Show home page from server - EACH tab gets its own view
+                if not self._server_ready or self._server is None:
+                    # Server not ready yet - create a blank page for now
+                    view = create_web_view(self._profile, self._blocker, page_class=BFSBPage)
+                    view.page()._main_window = self
+                    view.setHtml("<html><body style='background:#0a0a12;color:#f0f0f5;font-family:sans-serif;padding:2rem;text-align:center;'><h1>BFSB</h1><p>Starting search engine...</p></body></html>")
+                    self._stack.addWidget(view)
+                    self._views.insert(index, view)
+                else:
+                    view = create_web_view(self._profile, self._blocker, page_class=BFSBPage)
+                    view.page()._main_window = self
+                    view.setUrl(QUrl(self._server.home_url))
+                    self._stack.addWidget(view)
+                    self._views.insert(index, view)
+
+                tab_title = "Home"
+                tab_favicon = None
+            else:
+                # Regular web page
+                view = create_web_view(self._profile, self._blocker, page_class=BFSBPage)
+                view.page()._main_window = self
+                self._views.insert(index, view)
+
+                # Connect signals
+                view.titleChanged.connect(
+                    lambda t, i=index: self._on_title_changed(i, t)
+                )
+                view.urlChanged.connect(
+                    lambda u, i=index: self._on_url_changed(i, u)
+                )
+                view.loadFinished.connect(
+                    lambda ok, i=index: self._on_load_finished(i, ok)
+                )
+                # Connect history signals for immediate nav button updates
+                history = view.history()
+                history.canGoBackChanged.connect(
+                    lambda _, i=index: self._update_nav_buttons_for_tab(i)
+                )
+                history.canGoForwardChanged.connect(
+                    lambda _, i=index: self._update_nav_buttons_for_tab(i)
+                )
+
+                tab_title = self._short_title(url)
+                tab_favicon = None
+
+            # Add tab to tab bar
+            self._tab_bar.add_tab(index, tab_title, tab_favicon)
+
+            # Switch to new tab
+            self._set_active_tab(index)
+
+            if url and url != "about:home":
+                self._views[index].setUrl(QUrl(url))
+
+            return self._views[index] if url and url != "about:home" else None
+        except Exception as e:
+            print(f"[BFSBWindow] ERROR in new_tab: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _on_tab_switch(self, index: int) -> None:
+        """Handle tab switch from tab bar."""
+        self._set_active_tab(index)
+
+    def _on_tab_close(self, index: int) -> None:
+        """Handle tab close from tab bar."""
+        try:
+            # If this is the last tab, show close dialog
+            if len(self._views) <= 1:
+                self.close()  # This triggers closeEvent with the dialog
+            else:
+                self.close_tab(index)
+        except Exception as e:
+            print(f"[BFSBWindow] ERROR in _on_tab_close: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def close_tab(self, index: int) -> None:
+        """Close tab at index."""
+        try:
+            if 0 <= index < len(self._views):
+                view = self._views.pop(index)
+                self._stack.removeWidget(view)
+                view.deleteLater()
+
+                # Only call TabBar.close_tab if there will still be tabs left
+                # (if it was the last tab, we handle it in _on_tab_close via self.close())
+                if len(self._views) > 0:
+                    self._tab_bar.close_tab(index)
+        except Exception as e:
+            print(f"[BFSBWindow] ERROR in close_tab: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _set_active_tab(self, index: int) -> None:
+        """Set the active tab and update UI."""
+        if 0 <= index < len(self._views):
+            self._stack.setCurrentWidget(self._views[index])
+            self._tab_bar._set_active(index)  # Update tab bar visual state
+            self._nav_bar.set_url(self._views[index].url().toString())
+            # Update nav buttons
+            self._nav_bar.update_nav_buttons(
+                self._views[index].history().canGoBack(),
+                self._views[index].history().canGoForward()
+            )
+
+    def _on_title_changed(self, index: int, title: str) -> None:
+        """Handle tab title change."""
+        short_title = self._short_title_from_text(title)
+        self._tab_bar.update_tab_title(index, short_title)
+
+    def _on_url_changed(self, index: int, url: QUrl) -> None:
+        """Handle tab URL change."""
+        if self._stack.currentIndex() == index:
+            self._nav_bar.set_url(url.toString())
+            # Update nav buttons
+            view = self._views[index]
+            self._nav_bar.update_nav_buttons(
+                view.history().canGoBack(),
+                view.history().canGoForward()
+            )
+
+    def _on_load_finished(self, index: int, ok: bool) -> None:
+        """Handle page load finished."""
+        if 0 <= index < len(self._views):
+            view = self._views[index]
+            url = view.url().toString()
+            is_local = url.startswith(("http://localhost", "http://127.0.0.1", "about:"))
+            self._nav_bar.set_security_status(url, ok, is_local)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # NAVIGATION
+    # ═════════════════════════════════════════════════════════════════════
+
+    def navigate(self, text: str) -> None:
+        """Navigate to URL or trigger search via server."""
+        text = text.strip()
+        if not text:
+            return
+
+        # Handle BFSB internal URLs
+        if text.startswith("bfsb://about"):
+            self._show_about_dialog()
+            return
+        elif text.startswith("bfsb://preferences"):
+            self._show_preferences_dialog()
+            return
+
+        # Check if it's a URL
+        if text.startswith(("http://", "https://", "about:")):
+            url = text
+        elif "." in text and " " not in text and not text.startswith("?"):
+            # Looks like a domain
+            url = "https://" + text
+        else:
+            # It's a search query - navigate to server search
+            self._perform_search(text)
+            return
+
+        view = self._get_current_view()
+        if view:
+            view.setUrl(QUrl(url))
+
+    def _perform_search(self, query: str) -> None:
+            """Navigate to server search URL in current tab."""
+            if not self._server_ready:
+                return
+
+            search_url = f"{self._server.search_url}?q={quote(query)}"
+
+            view = self._get_current_view()
+            if view:
+                view.setUrl(QUrl(search_url))
+
+    def _perform_search(self, query: str) -> None:
+        """Navigate to server search URL in current tab."""
+        if not self._server_ready:
+            return
+
+        search_url = f"{self._server.search_url}?q={quote(query)}"
+
+        view = self._get_current_view()
+        if view:
+            view.setUrl(QUrl(search_url))
+
+    def _get_current_view(self) -> Optional[QWebEngineView]:
+        """Get the currently active web view."""
+        idx = self._tab_bar.get_active_index()
+        if 0 <= idx < len(self._views):
+            return self._views[idx]
+        return None
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # NAVIGATION HELPERS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _update_nav_buttons_for_tab(self, index: int) -> None:
+        """Update nav buttons for a specific tab if it's the active one."""
+        if self._stack.currentIndex() == index and 0 <= index < len(self._views):
+            view = self._views[index]
+            self._nav_bar.update_nav_buttons(
+                view.history().canGoBack(),
+                view.history().canGoForward()
+            )
+
+    def go_back(self) -> None:
+        """Navigate back."""
+        view = self._get_current_view()
+        if view:
+            view.back()
+
+    def go_forward(self) -> None:
+        """Navigate forward."""
+        view = self._get_current_view()
+        if view:
+            view.forward()
+
+    def reload(self) -> None:
+        """Reload current page."""
+        view = self._get_current_view()
+        if view:
+            view.reload()
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # DOWNLOADS
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _on_download(self, download) -> None:
+
+    # ════════════════════════════════════════════════════════════════════
+    # WINDOW LIFECYCLE
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def closeEvent(self, event) -> None:
+        """Clean up on window close."""
+        # If we have multiple tabs, ask before closing the entire window
+        if len(self._views) > 1:
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QWidget
+            from PyQt6.QtCore import Qt
+            from PyQt6.QtGui import QFont
+
+            # Overlay dialog (bfsb-overlay)
+            dialog = QDialog(self)
+            dialog.setWindowTitle("")
+            dialog.setModal(True)
+            dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            dialog.setStyleSheet("* { outline: none !important; }")
+
+            # Main dialog container (bfsb-dialog)
+            container = QWidget(dialog)
+            container.setObjectName("bfsbDialog")
+            container.setFixedWidth(320)
+            container.setStyleSheet("""
+                QWidget#bfsbDialog {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e1e32, stop:1 #18182a);
+                    border: 1px solid rgba(255, 255, 255, 0.07);
+                    border-radius: 18px;
+                    padding: 32px 28px 24px;
+                    outline: none;
+                }
+                QLabel#bfsbDialogIcon {
+                    background: rgba(224, 48, 48, 0.12);
+                    border-radius: 24px;
+                    color: #e03030;
+                    font-size: 22px;
+                }
+                QLabel#bfsbDialogTitle {
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: #eeeef8;
+                    margin: 0 0 8px;
+                    letter-spacing: -0.01em;
+                    background: transparent;
+                    border: none;
+                }
+                QLabel#bfsbDialogMsg {
+                    font-size: 13.5px;
+                    color: #7070a0;
+                    line-height: 1.65;
+                    margin: 0 0 26px;
+                    background: transparent;
+                    border: none;
+                }
+                QLabel#bfsbDialogMsg strong {
+                    color: #eeeef8;
+                    font-weight: 600;
+                }
+                QLabel#bfsbDialogFooter {
+                    font-size: 11px;
+                    color: #3a3a58;
+                    margin-top: 16px;
+                    background: transparent;
+                    border: none;
+                }
+                QPushButton#bfsbBtnClose {
+                    width: 100%;
+                    padding: 11px;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    border: none;
+                    outline: none;
+                    background: #e03030;
+                    color: #fff;
+                    letter-spacing: 0.01em;
+                    transition: background 0.15s, box-shadow 0.15s, color 0.15s;
+                }
+                QPushButton#bfsbBtnClose:hover {
+                    background: #ff3e3e;
+                    box-shadow: 0 4px 20px rgba(224, 48, 48, 0.4);
+                }
+                QPushButton#bfsbBtnClose:focus-visible {
+                    box-shadow: 0 0 0 3px rgba(224, 48, 48, 0.4);
+                }
+                QPushButton#bfsbBtnCancel {
+                    width: 100%;
+                    padding: 11px;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    cursor: pointer;
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    outline: none;
+                    background: rgba(255, 255, 255, 0.05);
+                    color: #9090b8;
+                    transition: background 0.15s, box-shadow 0.15s, color 0.15s;
+                }
+                QPushButton#bfsbBtnCancel:hover {
+                    background: rgba(255, 255, 255, 0.09);
+                    color: #eeeef8;
+                }
+                QPushButton#bfsbBtnCancel:focus-visible {
+                    border-color: rgba(255, 255, 255, 0.25);
+                    color: #eeeef8;
+                }
+                QPushButton:focus {
+                    outline: none !important;
+                    box-shadow: none;
+                }
+                * { outline: none !important; box-shadow: none; }
+            """)
+
+            # Layout for container
+            container_layout = QVBoxLayout(container)
+            container_layout.setContentsMargins(28, 24, 28, 20)
+            container_layout.setSpacing(0)
+
+            # Title (bfsb-dialog-title)
+            title = QLabel("Close BFSB?")
+            title.setObjectName("bfsbDialogTitle")
+            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            container_layout.addWidget(title)
+
+            # Message (bfsb-dialog-msg)
+            tab_count = len(self._views)
+            message_text = f"You have <strong id=\"bfsb-tab-count\">{tab_count}</strong> tabs open.<br>Closing will exit the browser completely."
+            message = QLabel(message_text)
+            message.setObjectName("bfsbDialogMsg")
+            message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            message.setWordWrap(True)
+            message.setTextFormat(Qt.TextFormat.RichText)
+            container_layout.addWidget(message)
+            container_layout.addSpacing(26)
+
+            # Buttons (bfsb-dialog-btns) - stacked vertically
+            btn_layout = QVBoxLayout()
+            btn_layout.setSpacing(10)
+
+            confirm_btn = QPushButton("Close All Tabs")
+            confirm_btn.setObjectName("bfsbBtnClose")
+            confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            confirm_btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            confirm_btn.clicked.connect(dialog.accept)
+            confirm_btn.setDefault(True)
+            btn_layout.addWidget(confirm_btn)
+
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.setObjectName("bfsbBtnCancel")
+            cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel_btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            cancel_btn.clicked.connect(dialog.reject)
+            btn_layout.addWidget(cancel_btn)
+
+            container_layout.addLayout(btn_layout)
+            container_layout.addSpacing(16)
+
+            # Footer (bfsb-dialog-footer)
+            footer = QLabel("BFSB® · Browser For Safe Browsing")
+            footer.setObjectName("bfsbDialogFooter")
+            footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            container_layout.addWidget(footer)
+
+            # Dialog layout
+            dialog_layout = QVBoxLayout(dialog)
+            dialog_layout.setContentsMargins(0, 0, 0, 0)
+            dialog_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dialog_layout.addWidget(container)
+
+            # Show dialog
+            if dialog.exec() == QDialog.DialogCode.Rejected:
+                event.ignore()
+                return
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(shutdown_server())
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # HELPERS
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _short_title(url: str) -> str:
+        """Generate short title from URL."""
+        if url in ("about:home", "about:blank"):
+            return "Home"
+        try:
+            host = QUrl(url).host()
+            return host if host else url[:25]
+        except Exception:
+            return url[:25]
+
+    @staticmethod
+    def _short_title_from_text(text: str) -> str:
+        """Generate short title from page title."""
+        if not text:
+            return "New Tab"
+        if len(text) > 30:
+            return text[:27] + "…"
+        return text
+
+    def _show_about_dialog(self) -> None:
+        """Show the About BFSB dialog."""
+        from .navigation import AboutDialog
+        dialog = AboutDialog(self)
+        dialog.exec()
+
+    def _show_preferences_dialog(self) -> None:
+        """Show the Preferences dialog."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QWidget
+        from PyQt6.QtCore import Qt
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Preferences")
+        dialog.setFixedSize(500, 400)
+        dialog.setModal(True)
+        dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        container = QWidget(dialog)
+        container.setObjectName("prefsDialog")
+        container.setStyleSheet("""
+            QWidget#prefsDialog {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e1e32, stop:1 #18182a);
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                border-radius: 18px;
+                outline: none;
+            }
+            QLabel {
+                background: transparent;
+                border: none;
+                color: #eeeef8;
+            }
+            QPushButton {
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                color: #9090b8;
+                font-size: 13px;
+                font-weight: 500;
+                padding: 8px 16px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.1);
+                color: #eeeef8;
+            }
+            QPushButton:pressed {
+                background: rgba(255, 255, 255, 0.15);
+            }
+        """)
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("Preferences")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 22px; font-weight: 700; color: #eeeef8; letter-spacing: -0.02em;")
+        layout.addWidget(title)
+
+        subtitle = QLabel("BFSB Browser Settings")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet("font-size: 13px; color: #7c6af5; font-weight: 500;")
+        layout.addWidget(subtitle)
+
+        layout.addSpacing(24)
+
+        # Placeholder for preferences content
+        placeholder = QLabel("Preferences panel coming soon...")
+        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder.setStyleSheet("font-size: 14px; color: #7a7a8a; padding: 40px;")
+        layout.addWidget(placeholder)
+
+        layout.addStretch()
+
+        close_btn = QPushButton("Close")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(0, 0, 0, 0)
+        dialog_layout.addWidget(container)
+
+        dialog.exec()

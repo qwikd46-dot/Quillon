@@ -1,0 +1,18 @@
+[Desktop Entry]
+Version=1.0
+Name=BFSB
+Comment=Browser for Safe Browsing
+Exec=/home/zon/bfsb/bfsb_launcher.sh
+Icon=/home/zon/bfsb/bfsb_icon.png
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;Security;
+Keywords=browser;secure;privacy;bfsb;
+StartupNotify=true
+StartupWMClass=BFSB
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;x-scheme-handler/http;x-scheme-handler/https;
+Actions=NewWindow;
+
+[Desktop Action NewWindow]
+Name=New Window
+Exec=/home/zon/bfsb/bfsb_launcher.sh

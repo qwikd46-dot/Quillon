@@ -1,0 +1,687 @@
+"""BFSB — Complete Custom UI Design System.
+
+A cohesive, modern design for the entire browser chrome.
+No SearXNG references. BFSB branding + custom search animation preserved.
+"""
+
+from dataclasses import dataclass
+from PyQt6.QtGui import QColor, QPalette
+
+
+# ──────────────────────────────────────────────────────────────
+# DESIGN TOKENS — Single source of truth for all visual values
+# ──────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Colors:
+    """Complete color palette."""
+
+    # ── Base surfaces (darkest → lightest)
+    BG_0: str = "#0a0a12"      # Window background
+    BG_1: str = "#11111a"      # Tab bar, side panels
+    BG_2: str = "#181824"      # Nav bar, cards, elevated
+    BG_3: str = "#1f1f2e"      # Hover states, inputs
+    BG_4: str = "#28283a"      # Active states, borders
+
+    # ── Text hierarchy
+    TEXT_0: str = "#f0f0f5"    # Primary (titles, address bar)
+    TEXT_1: str = "#b8b8c8"    # Secondary (URL parts, metadata)
+    TEXT_2: str = "#7a7a8a"    # Muted (placeholders, disabled)
+    TEXT_3: str = "#505060"    # Subtle (dividers, inactive icons)
+
+    # ── Brand / Accent (BFSB Teal)
+    ACCENT: str = "#00d4aa"           # Primary brand
+    ACCENT_DIM: str = "#00b896"       # Hover/active
+    ACCENT_BG: str = "rgba(0, 212, 170, 0.12)"  # Backgrounds
+    ACCENT_BG_STRONG: str = "rgba(0, 212, 170, 0.2)"
+    ACCENT_GLOW: str = "rgba(0, 212, 170, 0.4)" # Shadows, focus rings
+
+    # ── Semantic states
+    SUCCESS: str = "#00d4aa"
+    WARNING: str = "#f5c842"
+    ERROR: str = "#ff4757"
+    SECURE: str = "#00d4aa"
+    INSECURE: str = "#f5c842"
+
+    # ── Borders & dividers
+    BORDER_0: str = "#1e1e2e"    # Subtle (card borders)
+    BORDER_1: str = "#2a2a3e"    # Default (input borders)
+    BORDER_2: str = "#3a3a4e"    # Emphasis (hover borders)
+
+    # ── Shadows
+    SHADOW_SM: str = "0 2px 8px rgba(0, 0, 0, 0.25)"
+    SHADOW_MD: str = "0 4px 16px rgba(0, 0, 0, 0.35)"
+    SHADOW_LG: str = "0 8px 32px rgba(0, 0, 0, 0.45)"
+    SHADOW_GLOW: str = "0 0 24px rgba(0, 212, 170, 0.15)"
+
+    # ── Address Bar (pill-shaped)
+    ADDR_BG: str = "#1f1f2e"      # BG_3 - default background
+    ADDR_BG_FOCUS: str = "#28283a"  # BG_4 - focus background
+    ADDR_BORDER: str = "#2a2a3e"    # BORDER_1 - default border
+    ADDR_BORDER_HOVER: str = "#7c6af5"  # BFSB Purple - hover border
+
+
+@dataclass(frozen=True)
+class Spacing:
+    """Consistent spacing scale."""
+    XS: int = 4
+    SM: int = 8
+    MD: int = 12
+    LG: int = 16
+    XL: int = 24
+    XXL: int = 32
+
+
+@dataclass(frozen=True)
+class Radius:
+    """Border radius scale."""
+    SM: int = 6
+    MD: int = 10
+    LG: int = 14
+    XL: int = 18
+    FULL: int = 9999
+
+
+@dataclass(frozen=True)
+class Typography:
+    """Font sizes and weights."""
+    # Sizes
+    XS: int = 10
+    SM: int = 11
+    BASE: int = 13
+    LG: int = 15
+    XL: int = 17
+    TITLE: int = 19
+
+    # Weights
+    REGULAR: int = 400
+    MEDIUM: int = 500
+    SEMIBOLD: int = 600
+    BOLD: int = 700
+
+
+@dataclass(frozen=True)
+class Transitions:
+    """Animation durations and easings."""
+    FAST: str = "120ms cubic-bezier(0.4, 0, 0.2, 1)"
+    BASE: str = "180ms cubic-bezier(0.4, 0, 0.2, 1)"
+    SLOW: str = "280ms cubic-bezier(0.4, 0, 0.2, 1)"
+    SPRING: str = "350ms cubic-bezier(0.34, 1.56, 0.64, 1)"
+
+
+@dataclass(frozen=True)
+class ZIndex:
+    """Layering hierarchy."""
+    BASE: int = 0
+    DROPDOWN: int = 100
+    MODAL: int = 200
+    TOAST: int = 300
+    TOOLTIP: int = 400
+    LOADER: int = 500
+
+
+# ──────────────────────────────────────────────────────────────
+# COMPONENT STYLESHEETS — Built from tokens above
+# ──────────────────────────────────────────────────────────────
+
+C = Colors()
+S = Spacing()
+R = Radius()
+T = Typography()
+TR = Transitions()
+Z = ZIndex()
+
+
+def _font(size: int, weight: int = T.REGULAR) -> str:
+    return f"font-size: {size}px; font-weight: {weight};"
+
+
+def _bg(color: str) -> str:
+    return f"background: {color};"
+
+
+def _color(color: str) -> str:
+    return f"color: {color};"
+
+
+def _border(width: int, color: str, radius: int = 0) -> str:
+    r = f"border-radius: {radius}px;" if radius else ""
+    return f"border: {width}px solid {color}; {r}"
+
+
+# ══════════════════════════════════════════════════════════════════
+# MAIN CONTAINERS
+# ══════════════════════════════════════════════════════════════════
+
+TAB_BAR = f"""\\
+    QWidget#TabBar {{
+        {_bg(C.BG_1)}
+        border-bottom: none;
+    }}
+"""
+
+SCROLL_AREA = f"""\\
+    QScrollArea {{
+        {_bg("transparent")}
+        border: none;
+        background: transparent;
+    }}
+    QScrollBar:vertical {{ width: 0px; }}
+    QScrollBar:horizontal {{ height: 0px; }}
+"""
+
+NAV_BAR = f"""\\
+    QWidget {{
+        {_bg(C.BG_2)}
+        border-bottom: 1px solid {C.BORDER_0};
+    }}
+"""
+
+STACK = f"{_bg(C.BG_0)}"
+
+STATUSBAR = f"""\\
+    QStatusBar {{
+        {_bg(C.BG_2)}
+        {_color(C.TEXT_2)}
+        {_font(T.XS)}
+        border-top: 1px solid {C.BORDER_0};
+        padding: 0 {S.MD}px;
+    }}
+"""
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# TAB STYLES
+# ═════════════════════════════════════════════════════════════════
+
+TAB_ACTIVE = f"""\\
+    QWidget {{
+        {_bg(C.BG_3)}
+        border-top: 1px solid {C.BORDER_1};
+        border-left: 1px solid {C.BORDER_1};
+        border-right: 1px solid {C.BORDER_1};
+        border-bottom: 1px solid {C.BG_0};
+        border-top-left-radius: {R.SM}px;
+        border-top-right-radius: {R.SM}px;
+    }}
+"""
+
+TAB_INACTIVE = f"""\\
+    QWidget {{
+        {_bg(C.BG_1)}
+        border: 1px solid {C.BORDER_1};
+        border-bottom: none;
+        border-top-left-radius: {R.SM}px;
+        border-top-right-radius: {R.SM}px;
+    }}
+    QWidget:hover {{
+        {_bg(C.BG_2)}
+    }}
+"""
+
+TAB_LABEL_ACTIVE = f"{_color(C.TEXT_0)} {_font(T.SM, T.MEDIUM)} background: transparent; border: none;"
+TAB_LABEL_INACTIVE = f"{_color(C.TEXT_2)} {_font(T.SM)} background: transparent; border: none;"
+
+
+# ═════════════════════════════════════════════════════════════════
+# BUTTONS
+# ═════════════════════════════════════════════════════════════════
+
+# New Tab (+) Button
+PLUS_BUTTON = f"""\\
+    QPushButton#NewTabButton {{
+        {_bg("transparent")}
+        {_color(C.TEXT_2)}
+        border: none;
+        {_font(20, T.BOLD)}
+        padding: 0 0 2px 0;
+        min-width: 36px;
+        max-width: 36px;
+        min-height: 36px;
+        max-height: 36px;
+        border-radius: {R.SM}px;
+    }}
+    QPushButton#NewTabButton:hover {{
+        {_bg(C.BG_3)}
+        {_color(C.TEXT_0)}
+    }}
+    QPushButton#NewTabButton:pressed {{
+        {_bg(C.BG_4)}
+    }}
+"""
+
+# Navigation Buttons (Back, Forward, Reload)
+NAV_BUTTON = f"""\\
+    QPushButton {{
+        {_bg("transparent")}
+        {_color(C.TEXT_1)}
+        border: none;
+        {_font(18)}
+        padding: {S.SM}px {S.MD}px;
+        min-width: 40px;
+        max-width: 40px;
+        min-height: 40px;
+        max-height: 40px;
+        border-radius: {R.MD}px;
+    }}
+    QPushButton:hover {{
+        {_bg(C.BG_3)}
+        {_color(C.TEXT_0)}
+    }}
+    QPushButton:pressed {{
+        {_bg(C.BG_4)}
+    }}
+    QPushButton:disabled {{
+        {_color(C.TEXT_3)}
+    }}
+"""
+
+# Generic Icon Button (for extensibility)
+ICON_BUTTON = f"""\\
+    QPushButton {{
+        {_bg("transparent")}
+        {_color(C.TEXT_1)}
+        border: none;
+        {_font(16)}
+        padding: {S.SM}px;
+        min-width: 36px;
+        max-width: 36px;
+        min-height: 36px;
+        max-height: 36px;
+        border-radius: {R.MD}px;
+    }}
+    QPushButton:hover {{
+        {_bg(C.BG_3)}
+        {_color(C.TEXT_0)}
+    }}
+    QPushButton:pressed {{
+        {_bg(C.BG_4)}
+    }}
+"""
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# SECURITY BADGE
+# ════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+
+SECURE_BADGE = f"""\\
+    QLabel {{
+        {_color(C.SECURE)}
+        {_font(T.XS, T.MEDIUM)}
+        padding: 0 {S.MD}px;
+        {_bg(C.ACCENT_BG)}
+        {_border(1, C.ACCENT, R.FULL)}
+        min-width: 56px;
+        text-align: center;
+        letter-spacing: 0.3px;
+    }}
+"""
+
+INSECURE_BADGE = f"""\\
+    QLabel {{
+        {_color(C.INSECURE)}
+        {_font(T.XS, T.MEDIUM)}
+        padding: 0 {S.MD}px;
+        {_bg("rgba(245, 200, 66, 0.12)")}
+        {_border(1, C.WARNING, R.FULL)}
+        min-width: 56px;
+        text-align: center;
+        letter-spacing: 0.3px;
+    }}
+"""
+
+HIDDEN_BADGE = f"""\\
+    QLabel {{
+        min-width: 0;
+        max-width: 0;
+        padding: 0;
+        border: none;
+        background: transparent;
+    }}
+"""
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# TAB CLOSE BUTTON
+# ════════════════════════════════════════════════════════════════
+
+TAB_CLOSE_INACTIVE = f"""\\
+    QPushButton {{
+        {_bg("transparent")}
+        {_color(C.TEXT_3)}
+        border: none;
+        {_font(14, T.BOLD)}
+        padding: 0;
+        min-width: 18px;
+        max-width: 18px;
+        min-height: 18px;
+        max-height: 18px;
+        border-radius: 9px;
+    }}
+    QPushButton:hover {{
+        {_bg(C.ERROR)}
+        color: white;
+    }}
+"""
+
+TAB_CLOSE_ACTIVE = f"""\\
+    QPushButton {{
+        {_bg("transparent")}
+        {_color(C.TEXT_2)}
+        border: none;
+        {_font(14, T.BOLD)}
+        padding: 0;
+        min-width: 18px;
+        max-width: 18px;
+        min-height: 18px;
+        max-height: 18px;
+        border-radius: 9px;
+    }}
+    QPushButton:hover {{
+        {_bg(C.ERROR)}
+        color: white;
+    }}
+"""
+
+TAB_CLOSE_HOVER = f"""\\
+    QPushButton {{
+        {_bg("transparent")}
+        {_color(C.TEXT_2)}
+        border: none;
+        {_font(14, T.BOLD)}
+        padding: 0;
+        min-width: 18px;
+        max-width: 18px;
+        min-height: 18px;
+        max-height: 18px;
+        border-radius: 9px;
+    }}
+    QPushButton:hover {{
+        {_bg(C.ERROR)}
+        color: white;
+    }}
+"""
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# FAVICON
+# ════════════════════════════════════════════════════════════════
+
+FAVICON = f"""\\
+    QLabel {{
+        {_bg("transparent")}
+        border-radius: 3px;
+    }}
+"""
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# TOOLTIPS
+# ════════════════════════════════════════════════════════════════
+
+TOOLTIP = f"""\\
+    QToolTip {{
+        {_bg(C.BG_3)}
+        {_color(C.TEXT_0)}
+        {_font(T.SM)}
+        {_border(1, C.BORDER_1, R.MD)}
+        padding: {S.SM}px {S.MD}px;
+    }}
+"""
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# SEARCH RESULTS
+# ════════════════════════════════════════════════════════════════
+
+RESULT_CARD = f"""\\
+    QFrame[resultCard="true"] {{
+        {_bg(C.BG_2)}
+        {_border(1, C.BORDER_0, R.MD)}
+    }}
+    QFrame[resultCard="true"][hovered="true"] {{
+        {_bg(C.BG_3)}
+        {_border(1, C.ACCENT, R.MD)}
+    }}
+    QLabel#resultUrl {{
+        {_color(C.TEXT_1)}
+        {_font(T.SM)}
+        background: transparent;
+        border: none;
+    }}
+    QLabel#resultTitle {{
+        {_color(C.TEXT_0)}
+        {_font(T.BASE, T.SEMIBOLD)}
+        background: transparent;
+        border: none;
+    }}
+    QLabel#resultSnippet {{
+        {_color(C.TEXT_1)}
+        {_font(T.SM)}
+        background: transparent;
+        border: none;
+        line-height: 1.5;
+    }}
+    QLabel#resultDomain {{
+        {_color(C.TEXT_2)}
+        {_font(T.XS, T.MEDIUM)}
+        padding: 2px {S.SM}px;
+        {_bg(C.BG_0)}
+        {_border(1, C.BORDER_0, R.SM)}
+    }}
+"""
+
+ENGINE_BADGE = f"""\\
+    QLabel[engineBadge="true"] {{
+        {_color(C.ACCENT)}
+        {_font(T.XS, T.MEDIUM)}
+        padding: 2px {S.SM}px;
+        {_bg(C.ACCENT_BG)}
+        {_border(1, C.ACCENT, R.FULL)}
+        letter-spacing: 0.3px;
+    }}
+"""
+
+EMPTY_MESSAGE = f"""\\
+    QLabel#emptyMessage {{
+        {_color(C.TEXT_0)}
+        {_font(T.TITLE, T.MEDIUM)}
+        background: transparent;
+        border: none;
+        margin-top: {S.LG}px;
+    }}
+"""
+
+EMPTY_HINT = f"""\\
+    QLabel#emptyHint {{
+        {_color(C.TEXT_2)}
+        {_font(T.SM)}
+        background: transparent;
+        border: none;
+        margin-top: {S.SM}px;
+    }}
+"""
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# PAGINATION
+# ════════════════════════════════════════════════════════════════
+
+PAGINATION_BTN = f"""\\
+    QPushButton#paginationBtn {{
+        {_bg(C.BG_2)}
+        {_color(C.TEXT_1)}
+        {_font(T.SM, T.MEDIUM)}
+        {_border(1, C.BORDER_1, R.MD)}
+        padding: {S.SM}px {S.MD}px;
+        min-width: 80px;
+    }}
+    QPushButton#paginationBtn:hover:enabled {{
+        {_bg(C.BG_3)}
+        {_color(C.TEXT_0)}
+        {_border(1, C.ACCENT, R.MD)}
+    }}
+    QPushButton#paginationBtn:pressed:enabled {{
+        {_bg(C.BG_4)}
+    }}
+    QPushButton#paginationBtn:disabled {{
+        {_color(C.TEXT_3)}
+        {_border(1, C.BORDER_0, R.MD)}
+    }}
+"""
+
+PAGE_BTN = f"""\\
+    QPushButton#pageBtn {{
+        {_bg(C.BG_2)}
+        {_color(C.TEXT_1)}
+        {_font(T.SM, T.MEDIUM)}
+        {_border(1, C.BORDER_1, R.MD)}
+        min-width: 36px;
+        max-width: 36px;
+        min-height: 36px;
+        max-height: 36px;
+    }}
+    QPushButton#pageBtn:hover {{
+        {_bg(C.BG_3)}
+        {_color(C.TEXT_0)}
+        {_border(1, C.ACCENT, R.MD)}
+    }}
+    QPushButton#pageBtn[active="true"] {{
+        {_bg(C.ACCENT)}
+        {_color(C.BG_0)}
+        {_border(1, C.ACCENT, R.MD)}
+    }}
+"""
+
+PAGE_ELLIPSIS = f"""\\
+    QLabel#pageEllipsis {{
+        {_color(C.TEXT_2)}
+        {_font(T.SM)}
+        background: transparent;
+        border: none;
+        padding: 0 {S.SM}px;
+    }}
+"""
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# DIMENSIONS — All sizing constants
+# ════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class Dimensions:
+    # Window
+    WINDOW_WIDTH: int = 1440
+    WINDOW_HEIGHT: int = 960
+
+    # Tab Bar
+    TAB_BAR_HEIGHT: int = 38
+    TAB_HEIGHT: int = 34
+    TAB_RADIUS: int = 8
+    TAB_MIN_WIDTH: int = 80      # Minimum tab width — never smaller
+    TAB_MAX_WIDTH: int = 240     # Maximum tab width when few tabs open
+    TAB_MARGIN_H: int = 10       # Horizontal margins inside tab
+    TAB_SPACING: int = 8         # Spacing between favicon/title/close
+    TAB_BAR_MARGIN_H: int = 8    # Tab bar horizontal margins
+    TAB_BAR_SPACING: int = 2     # Spacing between tabs
+    TAB_FONT_SIZE: int = 12
+    FAVICON_SIZE: int = 16
+    CLOSE_BTN_SIZE: int = 18
+    NEW_TAB_BTN_SIZE: int = 32
+
+    # Navigation Bar
+    NAV_BAR_HEIGHT: int = 52
+    NAV_MARGIN_H: int = 12
+    NAV_SPACING: int = 8
+    NAV_BTN_SIZE: int = 36
+    ADDR_BAR_HEIGHT: int = 40
+    ADDR_FONT_SIZE: int = 15
+    BADGE_HEIGHT: int = 24
+    BADGE_FONT_SIZE: int = 10
+    BADGE_PADDING_H: int = 10
+
+    # Status
+    STATUS_FONT_SIZE: int = 10
+
+
+
+# ═════════════════════════════════════════════════════════════════
+# EXPORTS
+# ════════════════════════════════════════════════════════════════
+
+C = Colors()
+S = Spacing()
+R = Radius()
+T = Typography()
+TR = Transitions()
+Z = ZIndex()
+DIMS = Dimensions()
+
+# Styles dict for easy access
+STYLES = {
+    # Containers
+    "TAB_BAR": TAB_BAR,
+    "SCROLL_AREA": SCROLL_AREA,
+    "NAV_BAR": NAV_BAR,
+    "STACK": STACK,
+    "STATUSBAR": STATUSBAR,
+    # Tabs
+    "TAB_ACTIVE": TAB_ACTIVE,
+    "TAB_INACTIVE": TAB_INACTIVE,
+    "TAB_LABEL_ACTIVE": TAB_LABEL_ACTIVE,
+    "TAB_LABEL_INACTIVE": TAB_LABEL_INACTIVE,
+    # Buttons
+    "PLUS_BUTTON": PLUS_BUTTON,
+    "NAV_BUTTON": NAV_BUTTON,
+    "ICON_BUTTON": ICON_BUTTON,
+    # Security
+    "SECURE_BADGE": SECURE_BADGE,
+    "INSECURE_BADGE": INSECURE_BADGE,
+    "HIDDEN_BADGE": HIDDEN_BADGE,
+    # Tab close
+    "TAB_CLOSE_INACTIVE": TAB_CLOSE_INACTIVE,
+    "TAB_CLOSE_ACTIVE": TAB_CLOSE_ACTIVE,
+    "TAB_CLOSE_HOVER": TAB_CLOSE_HOVER,
+    # Misc
+    "FAVICON": FAVICON,
+    "TOOLTIP": TOOLTIP,
+    # Search Results
+    "RESULT_CARD": RESULT_CARD,
+    "ENGINE_BADGE": ENGINE_BADGE,
+    "EMPTY_MESSAGE": EMPTY_MESSAGE,
+    "EMPTY_HINT": EMPTY_HINT,
+    # Pagination
+    "PAGINATION_BTN": PAGINATION_BTN,
+    "PAGE_BTN": PAGE_BTN,
+    "PAGE_ELLIPSIS": PAGE_ELLIPSIS,
+    # Functions
+    "get_palette": "get_palette",
+}
+
+
+def get_palette() -> QPalette:
+    """Application palette."""
+    pal = QPalette()
+    pal.setColor(QPalette.ColorRole.Window, QColor(C.BG_0))
+    pal.setColor(QPalette.ColorRole.WindowText, QColor(C.TEXT_0))
+    pal.setColor(QPalette.ColorRole.Base, QColor(C.BG_2))
+    pal.setColor(QPalette.ColorRole.AlternateBase, QColor(C.BG_1))
+    pal.setColor(QPalette.ColorRole.Text, QColor(C.TEXT_0))
+    pal.setColor(QPalette.ColorRole.Button, QColor(C.BG_2))
+    pal.setColor(QPalette.ColorRole.ButtonText, QColor(C.TEXT_0))
+    pal.setColor(QPalette.ColorRole.Highlight, QColor(C.ACCENT))
+    pal.setColor(QPalette.ColorRole.HighlightedText, QColor(C.BG_0))
+    pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(C.BG_3))
+    pal.setColor(QPalette.ColorRole.ToolTipText, QColor(C.TEXT_0))
+    pal.setColor(QPalette.ColorRole.Link, QColor(C.ACCENT))
+    pal.setColor(QPalette.ColorRole.LinkVisited, QColor(C.ACCENT_DIM))
+    return pal

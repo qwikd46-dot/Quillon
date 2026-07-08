@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m bfsb.main 2>&1 | head -50)",
+      "Bash(pip install:*)",
+      "Bash(uv pip:*)",
+      "Bash(pacman -S --noconfirm python-cryptography python-requests 2>&1 | tail -10)",
+      "Bash(sudo pacman:*)",
+      "Bash(python3 -m bfsb.main 2>&1 | head -100)",
+      "Bash(pip show:*)",
+      "Bash(export QTWEBENGINEPROCESS_PATH=/usr/lib/qt6/QtWebEngineProcess && python3 -m bfsb.main 2>&1 | head -100)",
+      "Bash(find /usr -name \"webengine*\" -type d 2>/dev/null | head -20)",
+      "Bash(export QTWEBENGINEPROCESS_PATH=/usr/lib/qt6/QtWebEngineProcess && export QTWEBENGINE_RESOURCES_PATH=/usr/share/qt6/resources && python3 -m bfsb.main 2>&1 | head -100)",
+      "Bash(export QTWEBENGINEPROCESS_PATH=/usr/lib/qt6/QtWebEngineProcess && export QTWEBENGINE_RESOURCES_PATH=/usr/share/qt6/resources && timeout 10 python3 -m bfsb.main 2>&1 | head -50)",
+      "Bash(export QTWEBENGINEPROCESS_PATH=/usr/lib/qt6/QtWebEngineProcess && export QTWEBENGINE_RESOURCES_PATH=/usr/share/qt6/resources && timeout 10 python3 test_browser.py 2>&1 | head -50)",
+      "Bash(timeout 15 python3 -m bfsb.main 2>&1 | head -50)",
+      "Bash(/usr/lib/qt6/QtWebEngineProcess --help 2>&1 | head -30)",
+      "Bash(timeout 20 python3 -m bfsb.main 2>&1 | head -50)",
+      "Bash(timeout 20 python3 -m bfsb.main 2>&1 | head -60)",
+      "Bash(curl -s http://127.0.0.1:8889/ | head -20)",
+      "Bash(curl -s http://127.0.0.1:8889/)",
+      "Bash(python3 -m bfsb.main 2>&1)",
+      "Bash(./bfsb_launcher.sh 2>&1)",
+      "Bash(pkill -f \"bfsb.main\" 2>/dev/null; sleep 1; ./bfsb_launcher.sh 2>&1)",
+      "Bash(pkill -f bfsb.main)"
+    ]
+  }
+}

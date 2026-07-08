@@ -1,0 +1,625 @@
+#!/usr/bin/env python3
+"""BFSB — Browser for Safe Browsing"""
+
+import sys
+import os
+import hashlib
+import sqlite3
+import subprocess
+from pathlib import Path
+from datetime import datetime
+from urllib.parse import quote
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLineEdit, QPushButton, QLabel, QStackedWidget, QStatusBar,
+    QSizePolicy, QScrollArea
+)
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QColor, QPalette, QIcon
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineUrlRequestInterceptor
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+# ── Paths ──
+BFSB_DIR = Path.home() / ".bfsb"
+COOKIE_DB = BFSB_DIR / "cookies.enc"
+BLOCKLIST_DIR = BFSB_DIR / "blocklists"
+KEY_FILE = BFSB_DIR / ".hw-key"
+LOG_FILE = BFSB_DIR / "bfsb.log"
+BFSB_DIR.mkdir(exist_ok=True)
+BLOCKLIST_DIR.mkdir(exist_ok=True)
+
+url_blocker = None
+
+def log(msg):
+    with open(LOG_FILE, "a") as f:
+        f.write(f"[{datetime.now():%H:%M:%S}] {msg}\n")
+
+# ── Hardware Fingerprint ──
+class HWKey:
+    @staticmethod
+    def fingerprint():
+        cpu = "unknown-cpu"
+        mobo = "unknown-mobo"
+        disk = "unknown-disk"
+        mac = "unknown-mac"
+        try:
+            r = subprocess.run(["dmidecode","-t","processor"], capture_output=True, text=True, timeout=5)
+            for l in r.stdout.split("\n"):
+                if "ID:" in l and "UUID" not in l:
+                    cpu = l.split("ID:")[-1].strip()
+        except: pass
+        try:
+            r = subprocess.run(["dmidecode","-t","baseboard"], capture_output=True, text=True, timeout=5)
+            for l in r.stdout.split("\n"):
+                if "Serial Number:" in l:
+                    mobo = l.split("Serial Number:")[-1].strip()
+        except: pass
+        try:
+            r = subprocess.run(["findmnt","-o","UUID","-n","/"], capture_output=True, text=True, timeout=5)
+            disk = r.stdout.strip()
+        except: pass
+        try:
+            r = subprocess.run(["ip","link","show"], capture_output=True, text=True, timeout=5)
+            for l in r.stdout.split("\n"):
+                if "link/ether" in l:
+                    mac = l.split("link/ether")[1].strip().split()[0]
+                    break
+        except: pass
+        return hashlib.sha256(f"{cpu}|{mobo}|{disk}|{mac}".encode()).hexdigest()
+
+    @classmethod
+    def key(cls):
+        fp = cls.fingerprint()
+        if KEY_FILE.exists():
+            salt = bytes.fromhex(KEY_FILE.read_text().strip())
+        else:
+            salt = os.urandom(16)
+            KEY_FILE.write_text(salt.hex())
+            os.chmod(KEY_FILE, 0o600)
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100000)
+        return kdf.derive(fp.encode())
+
+# ── Cookies ──
+class CookieVault:
+    def __init__(self):
+        self.aes = AESGCM(HWKey.key())
+        conn = sqlite3.connect(str(COOKIE_DB))
+        conn.execute("CREATE TABLE IF NOT EXISTS cookies (domain TEXT, name TEXT, value BLOB, PRIMARY KEY(domain,name))")
+        conn.commit()
+        conn.close()
+
+# ── URL Blocker ──
+class URLBlocker:
+    def __init__(self):
+        self.blocked = set()
+        self.whitelist = {"localhost","127.0.0.1","searxng","github.com","www.github.com",
+            "stackoverflow.com","wikipedia.org","www.wikipedia.org","wikimedia.org",
+            "discord.com","reddit.com","chat.openai.com","openai.com",
+            "duckduckgo.com","brave.com","youtube.com","twitter.com","x.com",
+            "gitlab.com","mozilla.org","archlinux.org"}
+        f = BLOCKLIST_DIR / "combined.txt"
+        if f.exists():
+            for line in open(f):
+                d = line.strip().lower()
+                if d and not d.startswith("#"):
+                    self.blocked.add(d)
+
+    def is_blocked(self, url_str):
+        try:
+            host = QUrl(url_str).host().lower()
+        except:
+            return False
+        if not host:
+            return False
+        parts = host.split(".")
+        for i in range(len(parts)-1):
+            if ".".join(parts[i:]) in self.whitelist:
+                return False
+        for i in range(len(parts)-1):
+            if ".".join(parts[i:]) in self.blocked:
+                return True
+        return False
+
+# ── Request Interceptor ──
+class Interceptor(QWebEngineUrlRequestInterceptor):
+    def __init__(self, blocker):
+        super().__init__()
+        self.blocker = blocker
+    def interceptRequest(self, info):
+        url = info.requestUrl().toString()
+        if "localhost" in url or "127.0.0.1" in url or ":8888" in url:
+            return
+        if info.resourceType() in (0,1,2,5,6,11) and self.blocker.is_blocked(url):
+            info.block(True)
+
+# ── Safe Page ──
+# Dangerous download extensions
+BAD_EXTS = {
+    ".exe",".msi",".bat",".cmd",".com",".pif",".scr",".gadget",
+    ".ps1",".vbs",".vbe",".js",".jse",".wsf",".wsh",".msc",
+    ".reg",".rgs",".inf",".ins",".isp",
+    ".sys",".drv",".cpl",".ocx",".dll",
+    ".hta",".msp",".mst",".msu",
+    ".webloc",".inetloc",
+    ".appimage",".run",".deb",".rpm",
+    ".jar",".class",
+    ".py",".pyc",".pyw",
+    ".sct",".shb",".shs",".lnk",".scf",
+    ".vhd",".vmdk",".img",".iso",".bin",
+}
+
+
+class SafePage(QWebEnginePage):
+    blocker = None
+    def __init__(self, profile, parent):
+        super().__init__(profile, parent)
+
+    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+        url_str = url.toString()
+        # Block dangerous downloads by extension
+        path = url.path().lower() if hasattr(url, 'path') else url_str.lower()
+        for ext in BAD_EXTS:
+            if path.endswith(ext):
+                log(f"BLOCKED DOWNLOAD: {url_str}")
+                return False
+        # Block by domain
+        if SafePage.blocker and SafePage.blocker.is_blocked(url_str):
+            log(f"BLOCKED: {url_str}")
+            return False
+        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+    def javaScriptConsoleMessage(self, level, message, line, source):
+        pass
+
+# ── Browser ──
+class BFSB(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("BFSB")
+        self.resize(1400, 900)
+        self.searx = "http://localhost:8888"
+        self.tabs = []       # QWebEngineView list
+        self.tab_btns = []   # QPushButton list (tab labels)
+        self.close_btns = [] # QPushButton list (x buttons)
+
+        # Profile
+        self.profile = QWebEngineProfile("BFSB", self)
+        self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
+        self.profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+        self.profile.setUrlRequestInterceptor(Interceptor(url_blocker))
+
+        # Aggressive security settings
+        settings = self.profile.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowGeolocationOnInsecureOrigins, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.DnsPrefetchEnabled, False)
+        # Block all downloads to dangerous paths
+        self.profile.downloadRequested.connect(self._on_download)
+
+        self._ui()
+        self.new_tab(self.searx)
+
+    def _ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0,0,0,0)
+        layout.setSpacing(0)
+
+        # ── Tab Bar ──
+        tab_row = QWidget()
+        tab_row.setFixedHeight(36)
+        tab_row.setStyleSheet("background:#111118;")
+        self.tab_row_layout = QHBoxLayout(tab_row)
+        self.tab_row_layout.setContentsMargins(0,0,0,0)
+        self.tab_row_layout.setSpacing(0)
+        layout.addWidget(tab_row)
+
+        # + button (before tabs, fixed position at left)
+        plus_btn = QPushButton("+")
+        plus_btn.setFixedSize(36, 36)
+        plus_btn.setStyleSheet("""
+            QPushButton{background:transparent;color:#888;border:none;font-size:18px;font-weight:bold;padding:0 0 2px 0;}
+            QPushButton:hover{background:#2a2a3a;color:#ccc;border-radius:4px;}
+        """)
+        plus_btn.clicked.connect(self._add_tab)
+        self.tab_row_layout.addWidget(plus_btn)
+
+        # Tab scroll area for overflow
+        tab_scroll = QScrollArea()
+        tab_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tab_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tab_scroll.setWidgetResizable(True)
+        tab_scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}")
+        self.tab_row_layout.addWidget(tab_scroll, 1)
+
+        tab_inner = QWidget()
+        self.tab_inner_layout = QHBoxLayout(tab_inner)
+        self.tab_inner_layout.setContentsMargins(0,0,0,0)
+        self.tab_inner_layout.setSpacing(0)
+        self.tab_inner_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        tab_scroll.setWidget(tab_inner)
+        self.tab_inner = tab_inner
+
+        # ── Nav Bar ──
+        nav = QWidget()
+        nav.setFixedHeight(44)
+        nav.setStyleSheet("background:#1a1a2e; border-bottom:1px solid #2a2a3e;")
+        navl = QHBoxLayout(nav)
+        navl.setContentsMargins(10,0,10,0)
+        navl.setSpacing(6)
+
+        btn_css = "QPushButton{background:transparent;color:#a0a0b0;border:none;border-radius:6px;padding:5px 9px;font-size:15px;}QPushButton:hover{background:#16213e;color:white;}"
+        self.back_btn = QPushButton("←")
+        self.back_btn.setStyleSheet(btn_css)
+        self.back_btn.clicked.connect(self.go_back)
+        navl.addWidget(self.back_btn)
+
+        self.fwd_btn = QPushButton("→")
+        self.fwd_btn.setStyleSheet(btn_css)
+        self.fwd_btn.clicked.connect(self.go_forward)
+        navl.addWidget(self.fwd_btn)
+
+        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn.setStyleSheet(btn_css)
+        self.refresh_btn.clicked.connect(self.reload)
+        navl.addWidget(self.refresh_btn)
+
+        self.addr = QLineEdit()
+        self.addr.setPlaceholderText("Search or enter URL...")
+        self.addr.setStyleSheet("QLineEdit{background:#0f0f1a;color:#eaeaea;border:1px solid #2a2a3e;border-radius:18px;padding:6px 14px;font-size:13px;}QLineEdit:focus{border-color:#0f3460;}")
+        self.addr.returnPressed.connect(self.navigate)
+        navl.addWidget(self.addr)
+
+        self.badge = QLabel("🔒 Secure")
+        self.badge.setStyleSheet("""
+            QLabel{
+                color:#4ecca3;
+                font-size:11px;
+                font-weight:500;
+                padding:4px 10px;
+                background:rgba(78,204,163,0.1);
+                border:1px solid rgba(78,204,163,0.3);
+                border-radius:8px;
+                line-height:16px;
+                min-width:60px;
+                text-align:center;
+            }
+        """)
+        self.badge.setVisible(False)
+        navl.addWidget(self.badge)
+        layout.addWidget(nav)
+
+        # ── Stack ──
+        self.stack = QStackedWidget()
+        self.stack.setStyleSheet("background:#0f0f1a;")
+        layout.addWidget(self.stack)
+
+        # ── Status ──
+        self.status = QStatusBar()
+        self.status.setStyleSheet("background:#1a1a2e;color:#666;font-size:10px;border-top:1px solid #2a2a3e;")
+        self.setStatusBar(self.status)
+        self.status.showMessage(f"Ready | {len(url_blocker.blocked):,} threats blocked")
+
+    def _add_tab(self):
+        self.new_tab()
+
+    def _on_download(self, download):
+        """Block dangerous downloads."""
+        url_path = download.url().path()
+        ext = Path(url_path).suffix.lower()
+        if ext in BAD_EXTS or not ext:
+            log(f"BLOCKED DOWNLOAD: {url_path}")
+            download.cancel()
+            download.deleteLater()
+            return
+        # Only allow safe downloads to /tmp
+        download.setPath(f"/tmp/{os.path.basename(url_path) or 'download'}")
+        download.accept()
+
+    def new_tab(self, url=None):
+        if url is None:
+            url = self.searx
+
+        view = QWebEngineView()
+        view.setPage(SafePage(self.profile, view))
+        self.tabs.append(view)
+        self.stack.addWidget(view)
+
+        idx = len(self.tab_btns)
+
+        # ── Chrome-style tab widget ──
+        tab_widget = QWidget()
+        tab_widget.setFixedHeight(34)
+        tab_widget.setMinimumWidth(120)
+        tab_widget.setMaximumWidth(220)
+        tab_widget.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed))
+        tab_widget.setStyleSheet("QWidget{background:#16161e;border-right:1px solid #111118;border-top-left-radius:5px;border-top-right-radius:5px;}")
+        tab_widget.setProperty("active", False)
+
+        tlayout = QHBoxLayout(tab_widget)
+        tlayout.setContentsMargins(8, 0, 6, 0)
+        tlayout.setSpacing(6)
+
+        # Favicon (16x16)
+        favicon_label = QLabel()
+        favicon_label.setFixedSize(16, 16)
+        favicon_label.setScaledContents(True)
+        favicon_label.setStyleSheet("background:transparent;")
+        tlayout.addWidget(favicon_label)
+
+        # Title
+        title_label = QLabel()
+        title_label.setStyleSheet("color:#aaa;font-size:11px;background:transparent;border:none;")
+        title_label.setMaximumWidth(140)
+        title_label.setText(self._short_title(url))
+        tlayout.addWidget(title_label, 1)
+
+        # Close button
+        x_btn = QPushButton("×")
+        x_btn.setFixedSize(18, 18)
+        x_btn.setStyleSheet("QPushButton{background:transparent;color:transparent;border:none;border-radius:3px;font-size:13px;font-weight:bold;padding:0 0 2px 0;}QPushButton:hover{background:#e94560;color:white;}")
+        tlayout.addWidget(x_btn)
+
+        # Add to tab_inner layout
+        self.tab_inner_layout.addWidget(tab_widget)
+
+        self.tab_btns.append(tab_widget)
+        self.close_btns.append(x_btn)
+
+        # Signals
+        tab_widget.mousePressEvent = lambda e, i=idx: self.switch_tab(i)
+        x_btn.clicked.connect(lambda _, i=idx: self.close_tab(i))
+        view.iconChanged.connect(lambda icon, i=idx, fl=favicon_label: fl.setPixmap(icon.pixmap(16, 16)) if not icon.isNull() else None)
+        view.titleChanged.connect(lambda t, i=idx, tl=title_label: tl.setText(self._short_title_from_text(t)))
+        view.urlChanged.connect(lambda u, i=idx: self.addr.setText(u.toString()) if self.stack.currentIndex() == i else None)
+        view.loadFinished.connect(lambda ok: self._load_status(ok))
+        view.loadFinished.connect(lambda ok, i=idx: self._on_load_finished(i, ok))
+        view.loadFinished.connect(lambda ok, i=idx: self._on_load_finished(i, ok))
+
+        self.switch_tab(idx)
+        view.setUrl(QUrl(url))
+
+    def _short_title(self, url):
+        if url == self.searx:
+            return "Search"
+        try:
+            host = QUrl(url).host()
+            return host if host else url[:25]
+        except:
+            return url[:25]
+
+    def _short_title_from_text(self, text):
+        if not text:
+            return "New Tab"
+        if len(text) > 30:
+            return text[:27] + "…"
+        return text
+
+    def close_tab(self, idx):
+        if len(self.tabs) <= 1:
+            self.close()
+            return
+        view = self.tabs.pop(idx)
+        self.stack.removeWidget(view)
+        view.deleteLater()
+        # Remove tab widget
+        tab_widget = self.tab_btns.pop(idx)
+        tab_widget.deleteLater()
+        self.close_btns.pop(idx)
+        # Switch to adjacent
+        new_idx = min(idx, len(self.tabs) - 1)
+        self.switch_tab(new_idx)
+
+    def switch_tab(self, idx):
+        if 0 <= idx < len(self.tabs):
+            self.stack.setCurrentIndex(idx)
+            self.addr.setText(self.tabs[idx].url().toString())
+            # Update active styling
+            for i, tw in enumerate(self.tab_btns):
+                is_active = (i == idx)
+                x_btn = self.close_btns[i]
+                if is_active:
+                    tw.setStyleSheet("QWidget{background:#24243a;border-right:1px solid #111118;border-top-left-radius:5px;border-top-right-radius:5px;}")
+                    for child in tw.findChildren(QLabel):
+                        child.setStyleSheet("color:#e0e0e8;font-size:11px;background:transparent;border:none;")
+                    x_btn.setStyleSheet("QPushButton{background:transparent;color:#888;border:none;border-radius:3px;font-size:13px;font-weight:bold;padding:0 0 2px 0;}QPushButton:hover{background:#e94560;color:white;}")
+                else:
+                    tw.setStyleSheet("QWidget{background:#16161e;border-right:1px solid #111118;border-top-left-radius:5px;border-top-right-radius:5px;}")
+                    for child in tw.findChildren(QLabel):
+                        child.setStyleSheet("color:#888;font-size:11px;background:transparent;border:none;")
+                    x_btn.setStyleSheet("QPushButton{background:transparent;color:transparent;border:none;border-radius:3px;font-size:13px;font-weight:bold;padding:0 0 2px 0;}QPushButton:hover{background:#e94560;color:white;}")
+
+    def _load_status(self, ok):
+        i = self.stack.currentIndex()
+        if 0 <= i < len(self.tabs):
+            url = self.tabs[i].url().toString()
+            # Only show badge on actual websites, hide on SearXNG homepage
+            if url.startswith("http://localhost") or url.startswith("http://127.0.0.1"):
+                self.badge.setVisible(False)
+            elif ok:
+                self.badge.setVisible(True)
+                if url.startswith("https://"):
+                    self.badge.setText("🔒 Secure")
+                    self.badge.setStyleSheet("""
+                        QLabel{
+                            color:#4ecca3;
+                            font-size:11px;
+                            font-weight:500;
+                            padding:4px 10px;
+                            background:rgba(78,204,163,0.1);
+                            border:1px solid rgba(78,204,163,0.3);
+                            border-radius:8px;
+                            line-height:16px;
+                            min-width:60px;
+                            text-align:center;
+                        }
+                    """)
+                elif url.startswith("http://"):
+                    self.badge.setText("Insecure")
+                    self.badge.setStyleSheet("""
+                        QLabel{
+                            color:#f0b429;
+                            font-size:11px;
+                            font-weight:500;
+                            padding:4px 10px;
+                            background:rgba(240,180,41,0.1);
+                            border:1px solid rgba(240,180,41,0.3);
+                            border-radius:8px;
+                            line-height:16px;
+                            min-width:60px;
+                            text-align:center;
+                        }
+                    """)
+            else:
+                self.badge.setVisible(False)
+        else:
+            self.badge.setVisible(False)
+
+
+    def _on_load_finished(self, idx, ok):
+        """Inject branding + smooth search animation on first tab."""
+        if not ok or idx != 0:
+            return
+        view = self.tabs[idx]
+        js = """
+        (function() {
+            document.querySelectorAll('h1, h2, h3, .title, [class*="brand"]').forEach(function(el) {
+                if (el.textContent.toLowerCase().includes('searxng') || el.textContent.toLowerCase().includes('searx')) {
+                    el.textContent = 'BFSB';
+                }
+            });
+            if (!document.getElementById('bfsb-anim-style')) {
+                var style = document.createElement('style');
+                style.id = 'bfsb-anim-style';
+                style.textContent = `
+                    .index img, .index [class*="logo"] {
+                        transition: opacity 0.15s ease-out;
+                        opacity: 1;
+                    }
+                    .index form, #search, .searchbox {
+                        transition: transform 0.15s ease-out;
+                        transform: translateY(0);
+                    }
+                    body.bfsb-focused .index img,
+                    body.bfsb-focused img[alt="BFSB"] {
+                        opacity: 0 !important;
+                        pointer-events: none !important;
+                    }
+                    body.bfsb-focused .index form,
+                    body.bfsb-focused #search,
+                    body.bfsb-focused .searchbox {
+                        transform: translateY(-120px) !important;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+            var searchInput = document.querySelector('input[type="search"], input[name="q"], #search_input, .searchbox, #q');
+            if (searchInput && !searchInput._bfsbBound) {
+                searchInput._bfsbBound = true;
+                searchInput.addEventListener('focus', function() {
+                    document.body.classList.add('bfsb-focused');
+                });
+                searchInput.addEventListener('blur', function() {
+                    if (!this.value.trim()) {
+                        document.body.classList.remove('bfsb-focused');
+                    }
+                });
+            }
+        })();
+        """
+        view.page().runJavaScript(js)
+
+
+    def _on_load_finished(self, idx, ok):
+        """Inject branding + smooth search animation on first tab."""
+        if not ok or idx != 0:
+            return
+        view = self.tabs[idx]
+        js = """
+        (function() {
+            document.querySelectorAll('h1, h2, h3, .title, [class*="brand"]').forEach(function(el) {
+                if (el.textContent.toLowerCase().includes('searxng') || el.textContent.toLowerCase().includes('searx')) {
+                    el.textContent = 'BFSB';
+                }
+            });
+            if (!document.getElementById('bfsb-anim-style')) {
+                var style = document.createElement('style');
+                style.id = 'bfsb-anim-style';
+                style.textContent = `
+                    .index img, .index [class*="logo"] { transition: opacity 0.15s ease-out; opacity: 1; }
+                    .index form, #search, .searchbox { transition: transform 0.15s ease-out; transform: translateY(0); }
+                    body.bfsb-focused .index img, body.bfsb-focused img[alt="BFSB"] { opacity: 0 !important; pointer-events: none !important; }
+                    body.bfsb-focused .index form, body.bfsb-focused #search, body.bfsb-focused .searchbox { transform: translateY(-120px) !important; }
+                    #send_search, #clear_search { display: none !important; }
+                `;
+                document.head.appendChild(style);
+            }
+            var si = document.querySelector('input[type="search"], input[name="q"], #search_input, .searchbox, #q');
+            if (si && !si._bfsbBound) {
+                si._bfsbBound = true;
+                si.addEventListener('focus', function() { document.body.classList.add('bfsb-focused'); });
+                si.addEventListener('blur', function() { if (!this.value.trim()) document.body.classList.remove('bfsb-focused'); });
+            }
+        })();
+        """
+        view.page().runJavaScript(js)
+
+    def navigate(self):
+        text = self.addr.text().strip()
+        if not text: return
+        if text.startswith(("http://","https://","about:")):
+            url = text
+        elif "." in text and " " not in text:
+            url = "https://" + text
+        else:
+            url = f"{self.searx}/search?q={quote(text)}"
+        i = self.stack.currentIndex()
+        if 0 <= i < len(self.tabs):
+            self.tabs[i].setUrl(QUrl(url))
+
+    def go_back(self):
+        i = self.stack.currentIndex()
+        if 0 <= i < len(self.tabs): self.tabs[i].back()
+
+    def go_forward(self):
+        i = self.stack.currentIndex()
+        if 0 <= i < len(self.tabs): self.tabs[i].forward()
+
+    def reload(self):
+        i = self.stack.currentIndex()
+        if 0 <= i < len(self.tabs): self.tabs[i].reload()
+
+# ── Main ──
+def main():
+    global url_blocker
+    url_blocker = URLBlocker()
+    SafePage.blocker = url_blocker
+    CookieVault()
+    log("BFSB starting")
+
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    pal = QPalette()
+    pal.setColor(QPalette.ColorRole.Window, QColor(15,15,26))
+    pal.setColor(QPalette.ColorRole.WindowText, QColor(234,234,234))
+    pal.setColor(QPalette.ColorRole.Base, QColor(26,26,46))
+    pal.setColor(QPalette.ColorRole.Text, QColor(234,234,234))
+    pal.setColor(QPalette.ColorRole.Highlight, QColor(15,52,96))
+    app.setPalette(pal)
+
+    b = BFSB()
+    b.show()
+    log("BFSB started")
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
