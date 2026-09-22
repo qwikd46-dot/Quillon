@@ -46,14 +46,17 @@ table inet bfsb_fw {
 
         # DNS (trusted resolvers only)
         ip daddr { 1.1.1.1, 1.0.0.1, 9.9.9.9, 208.67.222.222, 127.0.0.53 } udp dport 53 accept
-        ip daddr { 1.1.1.1, 1.1, 9.9.9.9 } tcp dport 853 accept
+        ip daddr { 1.1.1.1, 1.0.0.1, 9.9.9.9 } tcp dport 853 accept
 
         # Block known malicious IPs
         ip daddr @blocked_ips drop
         ip6 daddr @blocked_ips6 drop
 
         # Rate limit new outbound
-        ct state new limit rate 200/second burst 50 packets accept chain input {
+        ct state new limit rate 200/second burst 50 packets accept
+    }
+
+    chain input {
         type filter hook input priority 0; policy drop;
 
         # Allow loopback

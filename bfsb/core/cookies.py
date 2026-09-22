@@ -1,7 +1,7 @@
 """Cookie vault with encrypted storage."""
 
 import sqlite3
-from pathlib import Path
+import os
 
 from .config import PATHS
 from .crypto import KEY_MANAGER
@@ -30,12 +30,12 @@ class CookieVault:
 
     def set_cookie(self, domain: str, name: str, value: bytes) -> None:
         """Store encrypted cookie."""
-        nonce = KEY_MANAGER.get_aesgcm().nonce  # type: ignore
+        nonce = os.urandom(12)
         encrypted = self._aes.encrypt(nonce, value, domain.encode())
         conn = self._get_conn()
         conn.execute(
             "INSERT OR REPLACE INTO cookies (domain, name, value) VALUES (?, ?, ?)",
-            (domain, name, encrypted),
+            (domain, name, nonce + encrypted),
         )
         conn.commit()
         conn.close()
@@ -51,7 +51,9 @@ class CookieVault:
         if row is None:
             return None
         try:
-            return self._aes.decrypt(KEY_MANAGER.get_aesgcm().nonce, row[0], domain.encode())  # type: ignore
+            stored = bytes(row[0])
+            nonce, encrypted = stored[:12], stored[12:]
+            return self._aes.decrypt(nonce, encrypted, domain.encode())
         except Exception:
             return None
 

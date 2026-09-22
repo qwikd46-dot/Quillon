@@ -11,6 +11,7 @@ import httpx
 
 from bfsb.core.config import APP_CONFIG, SECURITY_CONFIG
 from bfsb.core.search.models import (
+    SearchResult,
     SearchResponse,
     MergedSearchResponse,
     EngineType,
@@ -23,8 +24,10 @@ class SearchManager:
     """High-level search orchestration with persistent client."""
 
     def __init__(self, enabled_engines: list[str] | None = None):
-        from bfsb.core.config import ENGINE_CONFIGS_RAW
-        self.enabled_engines = enabled_engines or list(ENGINE_CONFIGS_RAW.keys())
+        # Filter to only enabled engines
+        if enabled_engines is None:
+            enabled_engines = list(APP_CONFIG.SEARCH_DEFAULT_ENGINES)
+        self.enabled_engines = enabled_engines
         self._client: Optional[httpx.AsyncClient] = None
         self._providers: dict[EngineType, any] = {}
         self._merger = ResultMerger()
@@ -106,7 +109,7 @@ class SearchManager:
         page: int = 1,
         engines: list[str] | None = None,
     ) -> MergedSearchResponse:
-        """Execute search across all enabled engines."""
+        """Execute search across all enabled engines with retry logic."""
         if not self._initialized:
             await self.initialize()
 
@@ -127,77 +130,94 @@ class SearchManager:
         # Determine which engines to use
         target_engines = engines or [e.value for e in self._providers.keys()]
 
-        # Run searches concurrently
-        tasks = []
-        for engine_name in target_engines:
-            try:
-                engine_type = EngineType(engine_name)
-                provider = self._providers.get(engine_type)
-                if provider:
-                    tasks.append(provider.search(query, page))
-            except ValueError:
+        # Retry logic: try up to 2 times with a small delay
+        max_retries = 2
+        for attempt in range(max_retries):
+            # Run searches concurrently
+            tasks = []
+            for engine_name in target_engines:
+                try:
+                    engine_type = EngineType(engine_name)
+                    provider = self._providers.get(engine_type)
+                    if provider:
+                        tasks.append(provider.search(query, page))
+                except ValueError:
+                    continue
+
+            if not tasks:
+                return MergedSearchResponse(
+                    query=query, results=(), page=page,
+                    engines_used=(), total_results=0,
+                )
+
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Filter successful responses
+            valid_responses: list[SearchResponse] = []
+            engines_used: list[EngineType] = []
+
+            for i, resp in enumerate(responses):
+                if isinstance(resp, SearchResponse) and resp.success:
+                    valid_responses.append(resp)
+                    engines_used.append(resp.engine)
+                elif isinstance(resp, Exception):
+                    print(f"[SearchManager] Engine {target_engines[i]} failed: {resp}")
+
+            # If we got results, merge and return
+            if valid_responses:
+                merged_results = self._merger.merge(valid_responses)
+
+                response = MergedSearchResponse(
+                    query=query,
+                    results=tuple(
+                        m.to_search_result(EngineType(next(iter(m.engines))), m.best_rank) for m in merged_results
+                    ),
+                    page=page,
+                    engines_used=tuple(engines_used),
+                    total_results=len(merged_results),
+                    response_time_ms=max((r.response_time_ms for r in valid_responses), default=0),
+                )
+
+                # Cache the result
+                self._set_cached(cache_key, response)
+                return response
+
+            # No results - retry if not last attempt
+            if attempt < max_retries - 1:
+                print(f"[SearchManager] No results for '{query}', retrying ({attempt + 1}/{max_retries})...")
+                await asyncio.sleep(0.5)
                 continue
 
-        if not tasks:
-            return MergedSearchResponse(
-                query=query, results=(), page=page,
-                engines_used=(), total_results=0,
-            )
-
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Filter successful responses
-        valid_responses: list[SearchResponse] = []
-        engines_used: list[EngineType] = []
-
-        for i, resp in enumerate(responses):
-            if isinstance(resp, SearchResponse) and resp.success:
-                valid_responses.append(resp)
-                engines_used.append(resp.engine)
-            elif isinstance(resp, Exception):
-                print(f"[SearchManager] Engine {target_engines[i]} failed: {resp}")
-
-        # Merge results
-        merged_results = self._merger.merge(valid_responses)
-
-        # Convert to final response
-        response = MergedSearchResponse(
-            query=query,
-            results=tuple(
-                MergedResult(
-                    url=m.url,
-                    title=m.title,
-                    snippet=m.snippet,
-                    source_domain=m.source_domain,
-                    engines=m.engines,
-                    best_rank=m.best_rank,
-                    weighted_score=m.weighted_score,
-                    favicon_url=m.favicon_url,
-                    thumbnail_url=m.thumbnail_url,
-                    published_date=m.published_date,
-                ) for m in merged_results
-            ),
-            page=page,
-            engines_used=tuple(engines_used),
-            total_results=len(merged_results),
-            response_time_ms=max((r.response_time_ms for r in valid_responses), default=0),
+        # All retries exhausted - return empty result
+        return MergedSearchResponse(
+            query=query, results=(), page=page,
+            engines_used=(), total_results=0,
         )
 
-        # Cache the result
-        self._set_cached(cache_key, response)
-        return response
 
+# Synchronous wrapper for Qt integration.
+#
+# As of 2026-07-28, this now uses the BFSB local search engine
+# (LocalSearchEngine) instead of external providers. The async
+# SearchManager above is kept for backward compatibility but is
+# unused by the current server.py render path.
 
-# Synchronous wrapper for Qt integration
 class SyncSearchManager:
-    """Synchronous wrapper for Qt thread usage — reuses SearchManager."""
+    """Synchronous wrapper for Qt thread usage.
+
+    Routes queries through the custom local BM25 engine. No external
+    HTTP, no upstream search providers, no ready-to-use services.
+    """
 
     def __init__(self):
-        self._manager: Optional[SearchManager] = None
+        from bfsb.core.search.local import LocalSearchEngine
+        self._engine = LocalSearchEngine()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Kept for backward compat — some legacy code may still touch this.
+        self._manager: Optional[SearchManager] = None
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create event loop."""
+        """Get or create event loop (kept for backward compat)."""
         try:
             return asyncio.get_running_loop()
         except RuntimeError:
@@ -206,38 +226,11 @@ class SyncSearchManager:
                 asyncio.set_event_loop(self._loop)
             return self._loop
 
-    def _get_manager(self) -> SearchManager:
-        """Get or create SearchManager."""
-        if self._manager is None:
-            self._manager = SearchManager()
-        return self._manager
-
     def search(self, query: str, page: int = 1) -> MergedSearchResponse:
-        """Synchronous search (for Qt thread) — reuses manager."""
-        manager = self._get_manager()
-
-        async def _search():
-            await manager.initialize()
-            return await manager.search(query, page)
-
-        loop = self._get_loop()
-        if loop.is_running():
-            # If loop is running (Qt event loop), run in thread pool
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, _search())
-                return future.result(timeout=30)
-        else:
-            return loop.run_until_complete(_search())
+        """Synchronous search using the local engine."""
+        return self._engine.search(query, page)
 
     def close(self) -> None:
-        """Close the search manager."""
-        if self._manager:
-            loop = self._get_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    executor.submit(asyncio.run, self._manager.close()).result(timeout=10)
-            else:
-                loop.run_until_complete(self._manager.close())
-            self._manager = None
+        """No-op for the local engine — kept for API compat."""
+        self._engine = None  # type: ignore[assignment]
+        self._manager = None
