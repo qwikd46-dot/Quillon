@@ -50,8 +50,9 @@ class BFSBWindow(QMainWindow):
         # UI state
         self._profile = None
         self._stack: Optional[QStackedWidget] = None
-        self._views: list[QWebEngineView] = []  # web views for each tab
-        self._view_urls: dict[QWebEngineView, str] = {}  # track expected URL per view
+        self._views: list[QWebEngineView] = []
+        self._view_urls: dict[QWebEngineView, str] = {}
+        self._tab_state: dict[QWebEngineView, dict[str, str]] = {}
         self._initialized = False
 
         # Debounced tab sync
@@ -63,7 +64,7 @@ class BFSBWindow(QMainWindow):
         self._init_profile()
         self._init_ui()
         self._init_server()
-        self.new_tab()  # Creates first tab and loads home
+        self.new_tab()
         self._initialized = True
 
     def _init_profile(self) -> None:
@@ -71,7 +72,6 @@ class BFSBWindow(QMainWindow):
         from ..core import create_web_profile, configure_web_settings
         self._profile = create_web_profile()
         configure_web_settings(self._profile.settings())
-        # Set URL request interceptor ONCE on the shared profile
         self._profile.setUrlRequestInterceptor(RequestInterceptor(self._blocker))
         self._profile.downloadRequested.connect(self._on_download)
 
@@ -95,10 +95,9 @@ class BFSBWindow(QMainWindow):
         self._server_thread = threading.Thread(target=run_server, daemon=True)
         self._server_thread.start()
 
-        # Wait for server to be fully ready (with retries) - use health endpoint
         import time
         import requests
-        for i in range(100):  # Wait up to 10 seconds (100 * 0.1s)
+        for _ in range(100):
             time.sleep(0.1)
             try:
                 resp = requests.get("http://127.0.0.1:8889/health", timeout=0.5)
@@ -111,16 +110,13 @@ class BFSBWindow(QMainWindow):
             print("[BFSBWindow] WARNING: Server health check failed after 10s")
 
     def _init_ui(self) -> None:
-        """Initialize main UI — stacked widget for tabs."""
         self.setWindowTitle(APP_CONFIG.WINDOW_TITLE)
         self.resize(APP_CONFIG.WINDOW_WIDTH, APP_CONFIG.WINDOW_HEIGHT)
 
-        # Central widget = stacked widget for tabs
         self._stack = QStackedWidget()
         self._stack.setStyleSheet(f"background: {C.BG_0}; border: none;")
         self.setCentralWidget(self._stack)
 
-        # Status bar
         self._status_bar = QStatusBar()
         self._status_bar.setStyleSheet(f"""
             QStatusBar {{
@@ -135,55 +131,74 @@ class BFSBWindow(QMainWindow):
         self._update_status()
 
     def _update_status(self) -> None:
-        """Update status bar message."""
         self._status_bar.showMessage(
             f"Ready | {self._blocker.blocked_count:,} threats blocked"
         )
 
     def showEvent(self, event) -> None:
-        """Ensure window is raised and activated on Wayland/XWayland."""
         super().showEvent(event)
         self.raise_()
         self.activateWindow()
         self.setWindowState(self.windowState() | Qt.WindowState.WindowActive)
 
     def _create_view(self) -> QWebEngineView:
-        """Create a new web view."""
         view = create_web_view(self._profile, self._blocker, page_class=BFSBPage, window=self)
         view.page()._main_window = self
+        self._tab_state[view] = {"title": "BFSB", "url": "about:home", "page_type": "home"}
         return view
 
+    def _set_tab_state(self, view: QWebEngineView, url: str, title: Optional[str] = None, page_type: str = "site") -> None:
+        self._tab_state[view] = {
+            "title": title or self._short_title(url),
+            "url": url,
+            "page_type": page_type,
+        }
+        self._view_urls[view] = url
+
+    def _render_browser_shell(self, view: QWebEngineView, page_type: str, page_url: str = "about:blank", query: str = "") -> None:
+        if self._server is None or not self._server_ready:
+            view.setHtml(
+                "<html><body style='background:#0a0a12;color:#f0f0f5;font-family:sans-serif;padding:2rem;text-align:center;'>"
+                "<h1>BFSB</h1><p>Loading...</p></body></html>"
+            )
+            self._set_tab_state(view, "about:home", "BFSB", "home")
+            return
+
+        try:
+            template = self._server.jinja_env.get_template('bfsb_combined.html')
+            html = template.render(
+                PAGE_TYPE=page_type,
+                PAGE_URL=page_url,
+                QUERY=query,
+                RESULTS_COUNT='No results found',
+                RESULTS_HTML='<div style="text-align:center;color:#a0a0b0;padding:48px;">No results.</div>',
+                INFOBOX_HTML='<div class="infobox"><div class="infobox-title">Info</div><div style="color:#55556a;">No additional info available</div></div>',
+            )
+            view.setHtml(html, QUrl(self._server.home_url))
+            self._set_tab_state(view, page_url, self._short_title(page_url), page_type)
+        except Exception:
+            view.setUrl(QUrl(page_url if page_url.startswith("http") else self._server.home_url))
+            self._set_tab_state(view, page_url, self._short_title(page_url), page_type)
+
     def _load_home(self, view: Optional[QWebEngineView] = None) -> None:
-        """Load home page (search engine) into view."""
         target = view or self._views[-1] if self._views else None
         if not target:
             return
-        if not self._server_ready or self._server is None:
-            target.setHtml(
-                "<html><body style='background:#0a0a12;color:#f0f0f5;"
-                "font-family:sans-serif;padding:2rem;text-align:center;'>"
-                "<h1>BFSB</h1><p>Starting search engine...</p></body></html>"
-            )
-            self._view_urls[target] = "about:home"
-        else:
-            from ..core import get_server
-            import asyncio
-            loop = asyncio.new_event_loop()
-            try:
-                server = loop.run_until_complete(get_server())
-                template = server.jinja_env.get_template('bfsb_combined.html')
-                html = template.render(PAGE_TYPE='home')
-                # Set HTML WITH base URL so view.url() returns home URL immediately
-                target.setHtml(html, QUrl(self._server.home_url))
-                self._view_urls[target] = self._server.home_url
-            except Exception:
-                target.setUrl(QUrl(self._server.home_url))
-                self._view_urls[target] = self._server.home_url
-            finally:
-                loop.close()
+        home_url = self._server.home_url if self._server and self._server_ready else "about:home"
+        self._render_browser_shell(target, "home", home_url)
+
+    def _load_site(self, view: Optional[QWebEngineView], url: str) -> None:
+        if not view:
+            return
+        self._render_browser_shell(view, "site", url)
+
+    def _load_search(self, view: Optional[QWebEngineView], query: str) -> None:
+        if not view or not self._server or not self._server_ready:
+            return
+        search_url = f"{self._server.search_url}?q={quote(query)}"
+        self._render_browser_shell(view, "site", search_url)
 
     def _on_download(self, download) -> None:
-        """Handle download requests — security hardened."""
         url_path = download.url().path()
         ext = Path(url_path).suffix.lower()
 
@@ -196,34 +211,22 @@ class BFSBWindow(QMainWindow):
         download.setPath(f"/tmp/{Path(url_path).name or 'download'}")
         download.accept()
 
-    # ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-    # TAB MANAGEMENT (called from JS bridge)
-    # ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
     def _request_tab_sync(self) -> None:
-        """Request a debounced tab sync (coalesces multiple requests)."""
         if not self._pending_tab_sync:
             self._pending_tab_sync = True
-            self._tab_sync_timer.start(30)  # 30ms debounce
+            self._tab_sync_timer.start(30)
 
     def _sync_tabs_to_views(self) -> None:
-        """Sync tab list to all WebEngine views' HTML tab bars - incremental updates."""
         self._pending_tab_sync = False
-        # Build tab data
         tabs_data = []
         home_url = self._server.home_url if self._server else "http://127.0.0.1:8889/"
         for i, view in enumerate(self._views):
-            # Use tracked URL (works for inactive/new tabs), fallback to view.url()
-            url = self._view_urls.get(view, view.url().toString())
+            state = self._tab_state.get(view, {})
+            url = state.get("url") or self._view_urls.get(view, view.url().toString())
+            title = state.get("title") or ("BFSB" if url.startswith(home_url) or url in ("about:home", "about:blank") else (view.page().title() if view.page().title() else f"Tab {i+1}"))
             is_active = (i == self._stack.currentIndex())
-            # Use better title for home page / data URLs - check against known home URL
-            if url.startswith("data:") or url == "about:home" or url.startswith(home_url):
-                title = "BFSB — Browser For Safe Browsing"
-            else:
-                title = view.page().title() if view.page().title() else f"Tab {i+1}"
             tabs_data.append({"index": i, "title": title, "url": url, "active": is_active})
 
-        # Push to all views via runJavaScript - incremental DOM updates
         tabs_json = json.dumps(tabs_data)
         for view in self._views:
             try:
@@ -232,31 +235,24 @@ class BFSBWindow(QMainWindow):
                         var tabs = {tabs_json};
                         var tabBar = document.querySelector('.bfsb-tab-bar');
                         if (!tabBar) return;
-
                         var newTabBtn = document.getElementById('newTabBtn');
                         var existingTabs = Array.from(tabBar.querySelectorAll('.bfsb-tab'));
-
-                        // Update existing tabs in place where possible
                         var maxLen = Math.max(existingTabs.length, tabs.length);
                         for (var i = 0; i < maxLen; i++) {{
                             var existingTab = existingTabs[i];
                             var tabData = tabs[i];
-
                             if (tabData && existingTab) {{
-                                // Update existing tab
                                 var wasActive = existingTab.classList.contains('active');
                                 var shouldBeActive = tabData.active;
                                 if (wasActive !== shouldBeActive) {{
                                     existingTab.classList.toggle('active', shouldBeActive);
                                     existingTab.setAttribute('aria-selected', shouldBeActive ? 'true' : 'false');
                                 }}
-                                // Update title
                                 var titleEl = existingTab.querySelector('.bfsb-tab-title');
                                 if (titleEl && titleEl.textContent !== tabData.title) {{
                                     titleEl.textContent = tabData.title;
                                 }}
                             }} else if (tabData && !existingTab) {{
-                                // Add new tab
                                 var tabEl = document.createElement('div');
                                 tabEl.className = 'bfsb-tab' + (tabData.active ? ' active' : '');
                                 tabEl.setAttribute('role', 'tab');
@@ -271,7 +267,6 @@ class BFSBWindow(QMainWindow):
                                     tabBar.appendChild(tabEl);
                                 }}
                             }} else if (!tabData && existingTab) {{
-                                // Remove extra tab
                                 existingTab.remove();
                             }}
                         }}
@@ -281,11 +276,8 @@ class BFSBWindow(QMainWindow):
                 print(f"[Window] Tab sync failed for view: {e}")
 
     def _sync_single_view(self, view: QWebEngineView, new_active_index: int = None, old_active_index: int = None) -> None:
-        """Sync tab bar to a single WebEngine view - minimal update for instant tab switching."""
         try:
             if new_active_index is not None and old_active_index is not None and new_active_index != old_active_index:
-                # Minimal: only toggle active class on the two tabs that changed
-                # Use querySelectorAll to get only .bfsb-tab elements (not newTabBtn)
                 view.page().runJavaScript(f"""
                     (function() {{
                         var tabBar = document.querySelector('.bfsb-tab-bar');
@@ -300,17 +292,15 @@ class BFSBWindow(QMainWindow):
                     }})();
                 """)
             else:
-                # Full sync for new tab / close tab cases
                 tabs_data = []
                 home_url = self._server.home_url if self._server else "http://127.0.0.1:8889/"
                 for i, v in enumerate(self._views):
-                    # Use tracked URL (works for inactive/new tabs), fallback to view.url()
-                    url = self._view_urls.get(v, v.url().toString())
-                    # Check URL FIRST (works for inactive tabs), then page title as fallback
+                    state = self._tab_state.get(v, {})
+                    url = state.get("url") or self._view_urls.get(v, v.url().toString())
                     if url.startswith("data:") or url == "about:home" or url.startswith(home_url):
                         page_title = "BFSB — Browser For Safe Browsing"
                     else:
-                        page_title = v.page().title() if v.page().title() else f"Tab {i+1}"
+                        page_title = state.get("title") or (v.page().title() if v.page().title() else f"Tab {i+1}")
                     is_active = (i == self._stack.currentIndex())
                     tabs_data.append({"index": i, "title": page_title, "url": url, "active": is_active})
 
@@ -354,93 +344,69 @@ class BFSBWindow(QMainWindow):
             print(f"[Window] Tab sync failed for view: {e}")
 
     def new_tab(self, url: Optional[str] = None) -> Optional[QWebEngineView]:
-        """Create and add a new tab."""
         view = self._create_view()
 
-        # Add to stack
         index = self._stack.addWidget(view)
         self._views.insert(index, view)
 
-        # Connect loadFinished BEFORE loading content (race condition fix)
         def _on_load_finished(ok: bool):
             if ok:
                 QTimer.singleShot(0, lambda: self._sync_single_view(view))
             view.loadFinished.disconnect(_on_load_finished)
+
         view.loadFinished.connect(_on_load_finished)
 
-        # Load content FIRST (before switching)
         if url is None or url == "about:home":
             self._load_home(view)
+        elif url.startswith(("http://", "https://", "about:", "/")):
+            target_url = url if url.startswith(("http://", "https://", "about:")) else f"http://127.0.0.1:8889{url}"
+            self._load_site(view, target_url)
         else:
-            view.setUrl(QUrl(url))
-            self._view_urls[view] = url
+            self._load_search(view, url)
 
-        # Sync EXISTING views immediately (they have loaded DOMs)
         for i, existing_view in enumerate(self._views):
-            if i != index:  # Skip the new view
+            if i != index:
                 self._sync_single_view(existing_view)
 
-        # Switch to new tab
         self._stack.setCurrentIndex(index)
         self._update_status()
-
         return view
 
     def close_tab(self, index: int) -> None:
-        """Close tab at index."""
         if 0 <= index < len(self._views):
-            # Get the view being closed and the new active index
-            was_active = (index == self._stack.currentIndex())
             old_view = self._views.pop(index)
             self._stack.removeWidget(old_view)
             old_view.deleteLater()
-            # Clean up tracked URL
             self._view_urls.pop(old_view, None)
+            self._tab_state.pop(old_view, None)
 
-            # If closed the current tab, switch to adjacent
             if self._views:
                 new_index = min(index, len(self._views) - 1)
-                new_active_view = self._views[new_index]
-                
-                # Sync ALL views to remove the tab from their tab bars
                 self._sync_tabs_to_views()
-                
                 self._stack.setCurrentIndex(new_index)
                 self._update_status()
             else:
-                # No tabs left, create a new one - new_tab handles its own sync
                 self.new_tab()
 
     def switch_tab(self, index: int) -> None:
-        """Switch to tab at index."""
         if 0 <= index < len(self._views):
             old_index = self._stack.currentIndex()
-            # Sync the target view's tab bar BEFORE switching (so it's ready when visible)
             target_view = self._views[index]
             self._sync_single_view(target_view, new_active_index=index, old_active_index=old_index)
-            # Now switch
             self._stack.setCurrentIndex(index)
             self._update_status()
 
     def get_tab_count(self) -> int:
-        """Return number of open tabs."""
         return len(self._views)
 
     def get_active_tab_index(self) -> int:
-        """Return index of currently active tab."""
         return self._stack.currentIndex() if self._views else -1
 
-    # ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-    # NAVIGATION (called from JS bridge)
-    # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
     def navigate(self, text: str) -> None:
-        """Navigate to URL or trigger search via server."""
         text = text.strip()
         if not text:
             return
 
-        # Handle BFSB internal URLs
         if text.startswith("bfsb://about"):
             self._show_about_dialog()
             return
@@ -448,14 +414,11 @@ class BFSBWindow(QMainWindow):
             self._show_preferences_dialog()
             return
         elif text.startswith("bfsb://goBack"):
-            self.go_back()
-            return
+            self.go_back(); return
         elif text.startswith("bfsb://goForward"):
-            self.go_forward()
-            return
+            self.go_forward(); return
         elif text.startswith("bfsb://reload"):
-            self.reload()
-            return
+            self.reload(); return
         elif text.startswith("bfsb://switchTab"):
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(text)
@@ -471,8 +434,7 @@ class BFSBWindow(QMainWindow):
                 self.close_tab(int(query['index'][0]))
             return
         elif text.startswith("bfsb://newTab"):
-            self.new_tab()
-            return
+            self.new_tab(); return
         elif text.startswith("bfsb://navigate"):
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(text)
@@ -488,45 +450,38 @@ class BFSBWindow(QMainWindow):
                 self._perform_search(query['q'][0])
             return
         elif text.startswith("bfsb://"):
-            # Unknown bfsb:// scheme - ignore
             return
         elif text.startswith(("http://", "https://", "about:")):
             url = text
         elif text.startswith("/"):
-            # Internal path (e.g., /search?q=...) - treat as direct URL to server
             url = "http://127.0.0.1:8889" + text
         elif "." in text and " " not in text and not text.startswith("?"):
-            # Looks like a domain
             url = "https://" + text
         else:
-            # It's a search query - navigate to server search
             self._perform_search(text)
             return
 
         view = self._get_current_view()
         if view:
-            view.setUrl(QUrl(url))
-            self._view_urls[view] = url
+            self._load_site(view, url)
+            self._set_tab_state(view, url, self._short_title(url), "site")
 
     def _perform_search(self, query: str) -> None:
-        """Navigate to server search URL."""
         if not self._server_ready:
             return
-
         search_url = f"{self._server.search_url}?q={quote(query)}"
         view = self._get_current_view()
         if view:
-            view.setUrl(QUrl(search_url))
+            self._load_search(view, query)
+            self._set_tab_state(view, search_url, f"Search: {query}", "search")
 
     def _get_current_view(self) -> Optional[QWebEngineView]:
-        """Get the currently active web view."""
         idx = self._stack.currentIndex()
         if 0 <= idx < len(self._views):
             return self._views[idx]
         return None
 
     def go_back(self) -> None:
-        """Navigate back."""
         try:
             view = self._get_current_view()
             if view:
@@ -535,7 +490,6 @@ class BFSBWindow(QMainWindow):
             print(f"[Window] go_back error: {e}")
 
     def go_forward(self) -> None:
-        """Navigate forward."""
         try:
             view = self._get_current_view()
             if view:
@@ -544,7 +498,6 @@ class BFSBWindow(QMainWindow):
             print(f"[Window] go_forward error: {e}")
 
     def reload(self) -> None:
-        """Reload current page."""
         try:
             view = self._get_current_view()
             if view:
@@ -552,12 +505,7 @@ class BFSBWindow(QMainWindow):
         except Exception as e:
             print(f"[Window] reload error: {e}")
 
-    # ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-    # WINDOW LIFECYCLE
-    # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
     def closeEvent(self, event) -> None:
-        """Clean up on window close."""
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -566,13 +514,8 @@ class BFSBWindow(QMainWindow):
             pass
         super().closeEvent(event)
 
-    # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-    # HELPERS
-    # ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
     @staticmethod
     def _short_title(url: str) -> str:
-        """Generate short title from URL."""
         if url in ("about:home", "about:blank"):
             return "Home"
         try:
@@ -583,7 +526,6 @@ class BFSBWindow(QMainWindow):
 
     @staticmethod
     def _short_title_from_text(text: str) -> str:
-        """Generate short title from page title."""
         if not text:
             return "New Tab"
         if len(text) > 30:
@@ -591,13 +533,11 @@ class BFSBWindow(QMainWindow):
         return text
 
     def _show_about_dialog(self) -> None:
-        """Show the About BFSB dialog."""
         from .navigation import AboutDialog
         dialog = AboutDialog(self)
         dialog.exec()
 
     def _show_preferences_dialog(self) -> None:
-        """Show the Preferences dialog."""
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QWidget, QPushButton
         from PyQt6.QtCore import Qt
 
@@ -674,3 +614,6 @@ class BFSBWindow(QMainWindow):
         dialog_layout.addWidget(container)
 
         dialog.exec()
+
+
+# end-of-file
