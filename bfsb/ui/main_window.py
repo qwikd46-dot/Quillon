@@ -9,7 +9,7 @@ from typing import Optional
 from urllib.parse import quote
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl, QTimer
+from PyQt6.QtCore import Qt, QUrl, QTimer, QObject, pyqtSignal
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -35,14 +35,28 @@ from ..core import (
     RequestInterceptor,
 )
 
+# Single worker for blocking SQLite access that must never run on the GUI
+# thread (ground rule 6). BrowserDB is thread-safe (check_same_thread=False
+# + write lock), so workers only need serialization, not per-call conns.
+from concurrent.futures import ThreadPoolExecutor
+_db_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bfsb-db")
+
 
 class BFSBWindow(QMainWindow):
     """Main browser window — multi-tab, server-backed."""
+
+    # Emitted from the DB worker when a bookmark lookup for `view` finishes;
+    # Qt delivers it on the GUI thread (queued connection across threads).
+    _bookmark_checked = pyqtSignal(object, bool)
 
     def __init__(self, blocker: URLBlocker) -> None:
         super().__init__()
         self._blocker = blocker
         self._cookie_vault = CookieVault()
+        # Cache of url -> bookmarked, filled by the DB worker (avoids a
+        # synchronous SQLite read on the GUI thread per URL change).
+        self._bookmark_cache: dict[str, bool] = {}
+        self._bookmark_checked.connect(self._on_bookmark_checked)
 
         # Server
         self._server: Optional[BFSHBServer] = None
@@ -235,11 +249,36 @@ class BFSBWindow(QMainWindow):
                     view.history().canGoBack(), view.history().canGoForward())
             except Exception:
                 pass
+            self._refresh_bookmarked(view, url)
+
+    def _refresh_bookmarked(self, view, url: str) -> None:
+        """Update the chrome star without blocking the GUI thread.
+
+        Cached values apply instantly; cache misses are resolved by the DB
+        worker and applied via the _bookmark_checked signal.
+        """
+        if url in self._bookmark_cache:
+            self._chrome.set_bookmarked(self._bookmark_cache[url])
+            return
+        self._chrome.set_bookmarked(False)
+
+        def _lookup() -> None:
             try:
                 from ..core.storage.bookmarks import BookmarkStore
-                self._chrome.set_bookmarked(bool(BookmarkStore().get(url)))
+                marked = bool(BookmarkStore().get(url))
             except Exception:
-                self._chrome.set_bookmarked(False)
+                marked = False
+            self._bookmark_checked.emit(view, marked)
+
+        _db_executor.submit(_lookup)
+
+    def _on_bookmark_checked(self, view, marked: bool) -> None:
+        """GUI-thread slot: apply a finished bookmark lookup."""
+        url = self._view_urls.get(view)
+        if url is not None:
+            self._bookmark_cache[url] = marked
+        if view is self._get_current_view():
+            self._chrome.set_bookmarked(marked)
 
     def _sync_chrome_tabs(self) -> None:
         """Rebuild the native chrome tab bar from the real tab list."""
@@ -259,26 +298,37 @@ class BFSBWindow(QMainWindow):
             print(f"[Window] chrome tab sync failed: {e}")
 
     def _toggle_bookmark_current(self) -> None:
-        """Bookmark-star pressed on the native chrome."""
+        """Bookmark-star pressed on the native chrome.
+
+        The store read/write runs on the DB worker (never the GUI thread);
+        the star updates when the _bookmark_checked signal comes back.
+        The single-worker executor also serializes double-click races.
+        """
         view = self._get_current_view()
         if view is None:
             return
         url = self._view_urls.get(view) or view.url().toString()
         if self._is_bfsb_url(url):
             return
-        try:
-            from ..core.storage.bookmarks import BookmarkStore
+        title = view.page().title() or url
 
-            store = BookmarkStore()
-            if store.get(url):
-                store.remove(url)
-                marked = False
-            else:
-                store.add(url=url, title=view.page().title() or url)
-                marked = True
-            self._chrome.set_bookmarked(marked)
-        except Exception as e:
-            print(f"[Window] bookmark toggle failed: {e}")
+        def _toggle() -> None:
+            try:
+                from ..core.storage.bookmarks import BookmarkStore
+
+                store = BookmarkStore()
+                if store.get(url):
+                    store.remove(url)
+                    marked = False
+                else:
+                    store.add(url=url, title=title)
+                    marked = True
+            except Exception as e:
+                print(f"[Window] bookmark toggle failed: {e}")
+                return
+            self._bookmark_checked.emit(view, marked)
+
+        _db_executor.submit(_toggle)
 
     def _show_main_menu(self) -> None:
         """Show the BFSB 3-dots menu anchored to the native chrome button."""

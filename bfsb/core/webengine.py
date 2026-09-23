@@ -22,6 +22,11 @@ from .config import APP_CONFIG, SECURITY_CONFIG
 from .blocker import URLBlocker
 from .tampermonkey_scripts import inject_ghostery_scriptlet
 
+# Worker for blocking SQLite writes that must never run on the GUI thread
+# (phase 1, PERF_NOTES.md C). Single worker keeps writes serialized.
+from concurrent.futures import ThreadPoolExecutor
+_db_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bfsb-db")
+
 # ─────────────────────────────────────────────────────────────
 #  Auto-trust mitmproxy CA for HTTPS interception
 # ─────────────────────────────────────────────────────────────
@@ -2012,6 +2017,10 @@ def create_web_view(profile: QWebEngineProfile, blocker: URLBlocker, page_class=
 
         Local backend URLs are skipped here (the server logs searches
         itself); everything else http(s) is recorded with the page title.
+        The SQLite write runs on a worker thread — it measured 10-60ms of
+        GUI-thread stall per page load when run inline (PERF_NOTES.md C).
+        URL/title are captured on the GUI thread (cheap Qt calls); only
+        the store write is offloaded.
         """
         try:
             from urllib.parse import urlparse
@@ -2023,16 +2032,23 @@ def create_web_view(profile: QWebEngineProfile, blocker: URLBlocker, page_class=
                 "127.0.0.1", "::1", "localhost", "0.0.0.0",
             }:
                 return
-            from bfsb.core.storage.history import HistoryStore
-
             title = ""
             try:
                 title = view.page().title() or ""
             except Exception:
                 pass
-            HistoryStore().record(url_str, title)
         except Exception:
-            pass
+            return
+
+        def _write() -> None:
+            try:
+                from bfsb.core.storage.history import HistoryStore
+
+                HistoryStore().record(url_str, title)
+            except Exception:
+                pass
+
+        _db_executor.submit(_write)
 
     def _on_load_finished(ok: bool):
         status = "OK" if ok else "FAILED"
