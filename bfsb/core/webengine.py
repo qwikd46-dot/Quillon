@@ -25,6 +25,7 @@ from .tampermonkey_scripts import inject_ghostery_scriptlet
 # Worker for blocking SQLite writes that must never run on the GUI thread
 # (phase 1, PERF_NOTES.md C). Single worker keeps writes serialized.
 from concurrent.futures import ThreadPoolExecutor
+import threading
 _db_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bfsb-db")
 
 # ─────────────────────────────────────────────────────────────
@@ -175,7 +176,38 @@ def _check_command(cmd: str) -> bool:
 # Cache for the local Piped instance probe: (url, last_check_monotonic).
 # A network probe on every navigation made YouTube navigation hang when the
 # local Docker instance wasn't running; cache makes it at most 1 check/min.
+# The probe itself runs on a background refresher thread (phase 1) — the
+# GUI-thread navigation path only reads this cache, never probes.
 _local_piped_cache = None
+_piped_refresher_started = False
+
+
+def _ensure_local_piped_refresher() -> None:
+    """Start a daemon thread that refreshes the local-Piped cache every
+    60s so no navigation ever blocks on a network probe."""
+    global _piped_refresher_started
+    if _piped_refresher_started:
+        return
+    _piped_refresher_started = True
+
+    def _refresh_loop() -> None:
+        import time
+        import urllib.request
+
+        global _local_piped_cache
+        while True:
+            probed = None
+            try:
+                urllib.request.urlopen(
+                    "http://127.0.0.1:8080/api/v1/instance", timeout=0.5
+                )
+                probed = "http://127.0.0.1:8080"
+            except Exception:
+                probed = None
+            _local_piped_cache = (probed, time.monotonic())
+            time.sleep(60)
+
+    threading.Thread(target=_refresh_loop, daemon=True, name="bfsb-piped-probe").start()
 
 # Invidious instances currently on the official maintained list
 # (docs.invidious.io/instances) as of the time this was written. Public
@@ -920,22 +952,14 @@ class BFSBPage(SafePage):
         if not piped_live:
             piped_live = list(PIPED_INSTANCES)
 
-        # Check if we have a local instance running (Docker on port 8080).
-        # Cached + very short timeout so a hung probe can never stall the UI
-        # thread for more than 150ms once per minute.
-        import time
-        import urllib.request
-        global _local_piped_cache
-        now = time.monotonic()
-        if _local_piped_cache is None or (now - _local_piped_cache[1]) > 60:
-            try:
-                urllib.request.urlopen(
-                    "http://127.0.0.1:8080/api/v1/instance", timeout=0.15
-                )
-                _local_piped_cache = ("http://127.0.0.1:8080", now)
-            except Exception:
-                _local_piped_cache = (None, now)
-        if _local_piped_cache[0]:
+        # Local Piped instance (Docker on port 8080), probed by a
+        # background refresher thread. This used to be a synchronous
+        # urllib probe here — up to 150ms of GUI-thread stall on every
+        # navigation when the cache expired (PERF_NOTES.md C). The
+        # navigation path now only READS the cache; a worker refreshes
+        # it every 60s and any probe stall happens off the GUI thread.
+        _ensure_local_piped_refresher()
+        if _local_piped_cache and _local_piped_cache[0]:
             piped_live.insert(0, _local_piped_cache[0])
 
         def build_url(path, instance_idx=0, use_invidious=True):
