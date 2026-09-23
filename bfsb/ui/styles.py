@@ -54,6 +54,10 @@ class Colors:
     SHADOW_LG: str = "0 8px 32px rgba(0, 0, 0, 0.45)"
     SHADOW_GLOW: str = "0 0 24px rgba(0, 212, 170, 0.15)"
 
+    # ── Tab accent (used by the selected tab underline in the
+    # downloads panel — matches Chrome/Edge/VS Code's "active" tone).
+    NAVY: str = "#1a3a8a"
+
     # ── Address Bar (pill-shaped)
     ADDR_BG: str = "#1f1f2e"      # BG_3 - default background
     ADDR_BG_FOCUS: str = "#28283a"  # BG_4 - focus background

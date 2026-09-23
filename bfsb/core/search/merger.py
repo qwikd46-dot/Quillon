@@ -22,6 +22,21 @@ class MergedResult:
     thumbnail_url: str | None = None
     published_date: str | None = None
 
+    def to_search_result(self, engine: EngineType, rank: int) -> SearchResult:
+        """Convert to SearchResult for compatibility."""
+        # published_date is string in MergedResult, datetime in SearchResult - omit for now
+        return SearchResult(
+            url=self.url,
+            title=self.title,
+            snippet=self.snippet,
+            engine=engine,
+            rank=rank,
+            favicon_url=self.favicon_url,
+            thumbnail_url=self.thumbnail_url,
+            published_date=None,
+            source_domain=self.source_domain,
+        )
+
 
 class ResultMerger:
     """Merge and rank results from multiple engines."""

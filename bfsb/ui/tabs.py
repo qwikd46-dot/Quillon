@@ -186,6 +186,14 @@ class TabWidget(QWidget):
         layout.addWidget(self.close_btn)
 
         self._update_style()
+        # Overlay button for safe click handling (prevents segfault)
+        self._click_overlay = QPushButton(self)
+        self._click_overlay.setFlat(True)
+        self._click_overlay.setStyleSheet("background:transparent;")
+        self._click_overlay.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._click_overlay.clicked.connect(lambda: self._on_click and self._on_click(self._index))
+        self._click_overlay.setGeometry(self.rect())
+        self._click_overlay.raise_()
 
     def _update_style(self) -> None:
         if self._active:
@@ -230,10 +238,14 @@ class TabWidget(QWidget):
         self.favicon.set_favicon(pixmap)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._on_click and self._on_click(self._index)
+        # Deprecated – click handling moved to overlay button to avoid segfault
         super().mousePressEvent(event)
 
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_click_overlay"):
+            self._click_overlay.setGeometry(self.rect())
 
 class NewTabButton(QPushButton):
     """New tab (+) button at the end of the tab bar."""

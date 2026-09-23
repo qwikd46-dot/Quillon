@@ -130,8 +130,7 @@ class ResultCard(QFrame):
         self.domain_label.setObjectName("resultDomain")
     
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.result.url)
+        # Deprecated – click handling moved to overlay button to avoid segfault
         super().mousePressEvent(event)
     
     def enterEvent(self, event) -> None:

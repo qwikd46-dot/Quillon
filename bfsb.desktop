@@ -1,18 +1,21 @@
 [Desktop Entry]
 Version=1.0
-Name=BFSB
-Comment=Browser for Safe Browsing
-Exec=/home/zon/bfsb/bfsb_launcher.sh
-Icon=/home/zon/bfsb/bfsb_icon.png
-Terminal=false
 Type=Application
-Categories=Network;WebBrowser;Security;
-Keywords=browser;secure;privacy;bfsb;
+Name=BFSB
+GenericName=Safe Browser
+Comment=Browser for Safe Browsing — Local Metasearch, No Tracking
+Exec=/home/binwalk/Downloads/bfsb/bfsb_launcher.sh
+Icon=/home/binwalk/Downloads/bfsb/bfsb_icon.png
+Terminal=false
+Categories=Network;WebBrowser;
 StartupNotify=true
 StartupWMClass=BFSB
-MimeType=text/html;text/xml;application/xhtml+xml;application/xml;x-scheme-handler/http;x-scheme-handler/https;
+Path=/home/binwalk/Downloads/bfsb
+Keywords=browser;search;privacy;secure;metasearch;
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;x-scheme-handler/bfsb;
 Actions=NewWindow;
 
 [Desktop Action NewWindow]
 Name=New Window
-Exec=/home/zon/bfsb/bfsb_launcher.sh
+Exec=/home/binwalk/Downloads/bfsb/bfsb_launcher.sh
+

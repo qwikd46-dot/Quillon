@@ -1,6 +1,14 @@
 """Reusable UI components for the BFSB browser."""
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import (
+    QPointF,
+    QRectF,
+    Qt,
+    QPropertyAnimation,
+    pyqtProperty,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QSizePolicy
 
 from .styles import DIMS, STYLES
@@ -9,6 +17,120 @@ from .styles import DIMS, STYLES
 def _s(key: str) -> str:
     """Get style from STYLES dict."""
     return STYLES.get(key, "")
+
+
+# ────────────────────────────────
+# Toggle Switch
+# ────────────────────────────────
+
+class ToggleSwitch(QWidget):
+    """Animated toggle switch. Violet track when on, keyboard accessible.
+
+    Emits ``toggled(bool)`` on user interaction only — programmatic
+    ``setChecked`` updates the visuals without re-emitting.
+    """
+
+    toggled = pyqtSignal(bool)
+
+    _TRACK_ON = QColor("#7c6cf7")
+    _TRACK_OFF = QColor("#2a2f5c")
+    _THUMB = QColor("#ffffff")
+    _FOCUS_RING = QColor(124, 108, 247, 90)
+
+    def __init__(self, checked: bool = False, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(46, 26)
+        self._checked = checked
+        self._pos = 1.0 if checked else 0.0
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._anim = QPropertyAnimation(self, b"position", self)
+        self._anim.setDuration(180)
+
+    def get_position(self) -> float:
+        return self._pos
+
+    def set_position(self, value: float) -> None:
+        self._pos = max(0.0, min(1.0, value))
+        self.update()
+
+    position = pyqtProperty(float, get_position, set_position)
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, checked: bool) -> None:
+        if checked == self._checked:
+            return
+        self._checked = checked
+        self._anim.stop()
+        self._anim.setStartValue(self._pos)
+        self._anim.setEndValue(1.0 if checked else 0.0)
+        self._anim.start()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setChecked(not self._checked)
+            self.toggled.emit(self._checked)
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.setChecked(not self._checked)
+            self.toggled.emit(self._checked)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _update_thumb(self) -> None:
+        self._pos = self.get_position()
+        self.update()
+
+    def __init__(self, checked: bool = False, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(46, 26)
+        self._checked = checked
+        self._pos = 1.0 if checked else 0.0
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._anim = QPropertyAnimation(self, b"position", self)
+        self._anim.setDuration(180)
+        self._anim.finished.connect(self._update_thumb)
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Interpolate track color by animation position (animated transition)
+        t = self._pos
+        r = int(124 + (124 - 42) * t)  # 42 (#2a2f5c) → 124 (#7c6cf7) via position
+        g = int(108 + (108 - 47) * t)
+        b = int(247 + (247 - 92) * t)
+        track = QColor(r, g, b)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(track)
+        p.drawRoundedRect(QRectF(0, 0, 46, 26), 13, 13)
+        if self.hasFocus():
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            ring = QColor(self._TRACK_ON)
+            ring.setAlpha(110)
+            pen = p.pen()
+            pen.setWidth(2)
+            pen.setColor(ring)
+            p.setPen(pen)
+            p.drawRoundedRect(QRectF(1, 1, 44, 24), 12, 12)
+            p.setPen(Qt.PenStyle.NoPen)
+        thumb_x = 3 + t * (46 - 6 - 20)
+        p.setBrush(self._THUMB)
+        p.drawEllipse(QPointF(thumb_x + 10, 13), 10, 10)
+        p.end()
+
+
+def _lerp_color(a: QColor, b: QColor, t: float) -> QColor:
+    return QColor(
+        int(a.red() + (b.red() - a.red()) * t),
+        int(a.green() + (b.green() - a.green()) * t),
+        int(a.blue() + (b.blue() - a.blue()) * t),
+    )
 
 
 # ────────────────────────────────

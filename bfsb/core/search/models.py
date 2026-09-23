@@ -15,6 +15,7 @@ class EngineType(Enum):
     STARTPAGE = "startpage"
     MOJEEK = "mojeek"
     BING = "bing"  # Requires API key
+    LOCAL = "local"  # BFSB custom local BM25 engine
 
 
 @dataclass(frozen=True)
