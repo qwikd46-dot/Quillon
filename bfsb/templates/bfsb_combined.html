@@ -1254,15 +1254,18 @@
       }
     });
   });
-  // Sync the Adblocker switch with the real backend state.
-  fetch('/api/adblock').then(r => r.json()).then(st => {
-    if (st && typeof st.enabled === 'boolean') {
-      settings.blockTrackers = st.enabled;
-      saveSettings();
-      const sw = document.querySelector('.switch[data-setting="blockTrackers"]');
-      if (sw) sw.classList.toggle('on', st.enabled);
-    }
-  }).catch(() => {});
+  // Sync the Adblocker switch with the real backend state — deferred with
+  // the other non-critical startup work (phase 1 paint deferral).
+  var syncAdblockSwitch = function () {
+    fetch('/api/adblock').then(r => r.json()).then(st => {
+      if (st && typeof st.enabled === 'boolean') {
+        settings.blockTrackers = st.enabled;
+        saveSettings();
+        const sw = document.querySelector('.switch[data-setting="blockTrackers"]');
+        if (sw) sw.classList.toggle('on', st.enabled);
+      }
+    }).catch(() => {});
+  };
 
   /* ================= Settings ================= */
   $('engineSelect').value = settings.engine;
@@ -1388,13 +1391,19 @@
       }
     }
 
-    resize();
-    if (window.ResizeObserver) new ResizeObserver(resize).observe(mainCol);
-    frame();
+    // Phase 1: build the dot field after first paint — canvas setup was
+    // part of the 200-800ms DCL cost measured on the results page
+    // (PERF_NOTES.md A); it is decorative and can start later.
+    var startDots = function () {
+      resize();
+      if (window.ResizeObserver) new ResizeObserver(resize).observe(mainCol);
+      frame();
+    };
+    if (window.requestIdleCallback) requestIdleCallback(startDots, { timeout: 500 });
+    else setTimeout(startDots, 60);
   })();
 
-  /* ================= Init ================= */
-  (function init() {
+  /* ================= Init ================= */  (function init() {
     // Show the in-page chrome (tabs + address bar) only on home & results.
     const pt = window.__BFSB_PAGE__.pageType;
     chrome.style.display = (pt === 'home' || pt === 'results' || pt === 'about') ? '' : 'none';
@@ -1411,10 +1420,17 @@
     } else {
       showView('home');
     }
-    // Home bookmarks: prefer the server-rendered grid, but refresh live.
-    refreshHomeBookmarks();
-    updateBookmarkIcon();
-    hideProgress();
+    // Non-critical startup work runs after first paint (phase 1): the
+    // live bookmark refresh + the adblock-state fetch don't gate the
+    // first render of the page.
+    var deferredStart = function () {
+      refreshHomeBookmarks();   // home bookmarks grid
+      syncAdblockSwitch();      // privacy toggle real state
+      updateBookmarkIcon();
+      hideProgress();
+    };
+    if (window.requestIdleCallback) requestIdleCallback(deferredStart, { timeout: 400 });
+    else setTimeout(deferredStart, 60);
   })();
 </script>
 </body>
