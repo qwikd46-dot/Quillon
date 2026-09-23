@@ -441,46 +441,49 @@ class BFSBWindow(QMainWindow):
             return
 
         # Handle BFSB internal URLs
-        if text.startswith("bfsb://about"):
+        # NOTE: QUrl normalizes the scheme host to lowercase and appends a
+        # trailing slash (bfsb://newTab -> bfsb://newtab/), so every match
+        # must be case-insensitive.
+        if text.lower().startswith("bfsb://about"):
             self._show_about_dialog()
             return
-        elif text.startswith("bfsb://preferences"):
+        elif text.lower().startswith("bfsb://preferences"):
             self._show_preferences_dialog()
             return
-        elif text.startswith("bfsb://goBack"):
+        elif text.lower().startswith("bfsb://goback"):
             self.go_back()
             return
-        elif text.startswith("bfsb://goForward"):
+        elif text.lower().startswith("bfsb://goforward"):
             self.go_forward()
             return
-        elif text.startswith("bfsb://reload"):
+        elif text.lower().startswith("bfsb://reload"):
             self.reload()
             return
-        elif text.startswith("bfsb://switchTab"):
+        elif text.lower().startswith("bfsb://switchtab"):
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(text)
             query = parse_qs(parsed.query)
             if 'index' in query:
                 self.switch_tab(int(query['index'][0]))
             return
-        elif text.startswith("bfsb://closeTab"):
+        elif text.lower().startswith("bfsb://closetab"):
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(text)
             query = parse_qs(parsed.query)
             if 'index' in query:
                 self.close_tab(int(query['index'][0]))
             return
-        elif text.startswith("bfsb://newTab"):
+        elif text.lower().startswith("bfsb://newtab"):
             self.new_tab()
             return
-        elif text.startswith("bfsb://navigate"):
+        elif text.lower().startswith("bfsb://navigate"):
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(text)
             query = parse_qs(parsed.query)
             if 'url' in query:
                 self.navigate(query['url'][0])
             return
-        elif text.startswith("bfsb://search"):
+        elif text.lower().startswith("bfsb://search"):
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(text)
             query = parse_qs(parsed.query)
