@@ -488,7 +488,7 @@ class BFSHBServer:
 
         # PERF-DEBUG(phase1): measure query intake stages — remove after phase 1.
         import time as _ptime
-        _t_submit = _ptime.perf_counter()
+        _t_submit = _ptime.perf_counter()  # gated by BFSB_PERF=1
 
         # Log the search itself so History reflects what was asked,
         # not just the pages later visited. Best-effort, OFF the event
@@ -539,8 +539,9 @@ class BFSHBServer:
         )
         # PERF-DEBUG(phase1): query intake stage table — remove after phase 1.
         _t_render = _ptime.perf_counter()
-        print(
-            f"[PERF] search q={query!r} submit->history={(_t_history-_t_submit)*1000:.1f}ms "
+        if os.environ.get("BFSB_PERF") == "1":
+            print(
+                f"[PERF] search q={query!r} submit->history={(_t_history-_t_submit)*1000:.1f}ms "
             f"history->agg={(_t_agg-_t_history)*1000:.1f}ms "
             f"agg->render={(_t_render-_t_agg)*1000:.1f}ms "
             f"server_total={(_t_render-_t_submit)*1000:.1f}ms results={len(shown)}",

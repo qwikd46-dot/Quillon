@@ -529,9 +529,10 @@ class BFSBWindow(QMainWindow):
             _t3 = _t.nsecsElapsed()
             self._update_chrome_for_current()
             _t4 = _t.nsecsElapsed()
-            print(f"[PERF] switch_tab -> {index}: js_sync={_t1/1e6:.2f}ms "
-                  f"stack_switch={(_t2-_t1)/1e6:.2f}ms chrome_tabs={(_t3-_t2)/1e6:.2f}ms "
-                  f"chrome_update={(_t4-_t3)/1e6:.2f}ms total={_t4/1e6:.2f}ms", flush=True)
+            if os.environ.get("BFSB_PERF") == "1":
+                print(f"[PERF] switch_tab -> {index}: js_sync={_t1/1e6:.2f}ms "
+                      f"stack_switch={(_t2-_t1)/1e6:.2f}ms chrome_tabs={(_t3-_t2)/1e6:.2f}ms "
+                      f"chrome_update={(_t4-_t3)/1e6:.2f}ms total={_t4/1e6:.2f}ms", flush=True)
 
     def get_tab_count(self) -> int:
         """Return number of open tabs."""

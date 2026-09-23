@@ -33,6 +33,7 @@ embedded chromium. The browser's network inspector still sees only
 from __future__ import annotations
 
 import asyncio
+import os
 import dataclasses
 import re
 import time
@@ -202,10 +203,12 @@ async def aggregate_search(query: str, *, max_total_ms: int = 8000) -> Aggregate
         try:
             out = await asyncio.wait_for(coro, timeout=max_total_ms / 1000)
             # PERF-DEBUG(phase1): per-source latency
-            print(f"[PERF] source {label}: {(time.perf_counter()-_t)*1000:.1f}ms items={len(out) if out is not None else 'TIMEOUT'}", flush=True)
+            if os.environ.get("BFSB_PERF") == "1":
+                print(f"[PERF] source {label}: {(time.perf_counter()-_t)*1000:.1f}ms items={len(out) if out is not None else 'TIMEOUT'}", flush=True)
             return out
         except asyncio.TimeoutError:
-            print(f"[PERF] source {label}: TIMEOUT >{max_total_ms}ms", flush=True)  # PERF-DEBUG(phase1)
+            if os.environ.get("BFSB_PERF") == "1":
+                print(f"[PERF] source {label}: TIMEOUT >{max_total_ms}ms", flush=True)  # PERF-DEBUG(phase1)
             return None
 
     # SearXNG is the primary web-search source. HackerNews is a bonus
