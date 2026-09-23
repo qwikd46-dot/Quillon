@@ -281,19 +281,22 @@ class BFSBWindow(QMainWindow):
             self._chrome.set_bookmarked(marked)
 
     def _sync_chrome_tabs(self) -> None:
-        """Rebuild the native chrome tab bar from the real tab list."""
+        """Sync the native chrome tab bar with the real tab list.
+
+        Diff-based (phase 1): switching tabs updates titles + active state
+        in place; the widget rebuild only happens when tabs are added or
+        removed. The old clear()+re-add measured 7-15ms per switch.
+        """
         try:
-            chrome_bar = self._chrome.tab_bar
-            chrome_bar.clear()
             home_url = self._server.home_url if self._server else "http://127.0.0.1:8889/"
+            titles = []
             for i, view in enumerate(self._views):
                 url = self._view_urls.get(view, view.url().toString())
                 if url.startswith(("data:", "about:")) or url.startswith(home_url) or self._is_bfsb_url(url):
-                    title = "BFSB — New Tab"
+                    titles.append("BFSB — New Tab")
                 else:
-                    title = view.page().title() or f"Tab {i + 1}"
-                chrome_bar.add_tab(i, title)
-            chrome_bar.set_active(self._stack.currentIndex())
+                    titles.append(view.page().title() or f"Tab {i + 1}")
+            self._chrome.tab_bar.update_all(titles, self._stack.currentIndex())
         except Exception as e:
             print(f"[Window] chrome tab sync failed: {e}")
 

@@ -148,6 +148,9 @@ class NativeTab(QWidget):
         self.title_label.setText(title)
         self.title_label.setToolTip(title)
 
+    def title(self) -> str:
+        return self.title_label.text()
+
     def set_index(self, index: int):
         self._index = index
 
@@ -291,6 +294,22 @@ class NativeTabBar(QWidget):
 
     def count(self) -> int:
         return len(self._tabs)
+
+    def update_all(self, titles: List[str], active: int) -> None:
+        """Diff-based sync: update titles + active state in place when the
+        tab count is unchanged (the common switch case — phase 1: the old
+        clear()+re-add path measured 7-15ms per switch, O(tabs)); rebuild
+        only when tabs were added/removed."""
+        if len(self._tabs) == len(titles):
+            for i, title in enumerate(titles):
+                if self._tabs[i].title() != title:
+                    self._tabs[i].set_title(title)
+            self._set_active(active)
+            return
+        self.clear()
+        for i, title in enumerate(titles):
+            self.add_tab(i, title)
+        self._set_active(active)
 
     def clear(self):
         for tab in self._tabs:
