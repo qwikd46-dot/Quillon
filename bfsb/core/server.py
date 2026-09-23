@@ -19,10 +19,31 @@ from aiohttp import web
 from aiohttp.web_request import Request
 from aiohttp.web_response import Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from PyQt6.QtCore import QMetaObject, QTimer, Qt
+from PyQt6.QtCore import QMetaObject, QTimer, Qt, Q_ARG, QObject, pyqtSlot
 from PyQt6.QtWidgets import QApplication
 
 from bfsb.core.search.aggregator import AggregateResponse, Result, aggregate_search, shutdown as aggregator_shutdown
+
+
+class _MainThreadInvoker(QObject):
+    """Runs arbitrary callables on the Qt main thread.
+
+    ``QTimer.singleShot(0, fn)`` from a foreign thread never fires — the
+    internal timer would live on a thread with no event loop. Instead we
+    keep an invoker QObject living on the main thread and hand it keys of
+    pending callables via ``QMetaObject.invokeMethod`` with a queued
+    connection; its slot runs them on the main thread.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pending: dict[str, object] = {}
+
+    @pyqtSlot(str)
+    def _execute(self, key: str) -> None:
+        fn = self._pending.pop(key, None)
+        if callable(fn):
+            fn()
 
 
 # Deprecated: we no longer redirect to upstream. Results are aggregated
@@ -54,6 +75,8 @@ class BFSHBServer:
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        # Created lazily on the Qt main thread by _run_on_qt (see class doc).
+        self._invoker: Optional[_MainThreadInvoker] = None
 
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
@@ -90,6 +113,9 @@ class BFSHBServer:
         app.router.add_post('/api/history/remove', self.handle_api_history_remove)
         app.router.add_post('/api/history/clear', self.handle_api_history_clear)
         app.router.add_post('/api/ui/newTab', self.handle_api_new_tab)
+        # Adblocker state shared with the proxy/mitmdump layer (adblock_state.py).
+        app.router.add_get('/api/adblock', self.handle_api_adblock_get)
+        app.router.add_post('/api/adblock', self.handle_api_adblock_set)
 
         # Test fixtures used by the hermes harness. Serves tiny static
         # files (2KB text, 1KB PDF) so the DOWNLOADS check can verify
@@ -119,14 +145,16 @@ class BFSHBServer:
         return app
 
     @staticmethod
-    async def _cors_middleware(app: web.Application, handler):
-        async def middleware(request: Request) -> Response:
-            response = await handler(request)
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-            return response
-        return middleware
+    @web.middleware
+    async def _cors_middleware(request: Request, handler):
+        """aiohttp new-style middleware (requires the @web.middleware
+        decorator — without it aiohttp 3.x treats this as a legacy
+        (app, handler) factory and the app fails to serve requests)."""
+        response: Response = await handler(request)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
 
     async def handle_home(self, request: Request) -> Response:
         """Serve home page - rendered through Jinja2 with PAGE_TYPE='home'."""
@@ -201,46 +229,54 @@ class BFSHBServer:
             return web.json_response([])
 
     def _run_on_qt(self, fn, timeout: float = 5.0):
-        """Run ``fn(main_window_or_None)`` on the Qt main thread.
+        """Run ``fn(main_window_or_None)`` on the Qt main thread and wait.
 
-        Falls back to ``fn(None)`` when no GUI is present. Callers must
-        only touch QWidgets when ``main`` is not None (we ARE on the main
-        thread in that case); plain store access is safe anywhere.
+        Returns ``fn(None)`` when no Qt GUI is present. Raises on timeout
+        or when ``fn`` raised — callers must NOT fall back to running
+        ``fn`` on the calling (aiohttp) thread: touching QWidgets from a
+        non-GUI thread kills the process with SIGTRAP.
         """
         import threading
+        import uuid
 
-        try:
-            from PyQt6.QtCore import QTimer
-            from PyQt6.QtWidgets import QApplication
-            from bfsb.ui.main_window import BFSBWindow
+        from PyQt6.QtCore import Qt as _Qt
+        from bfsb.ui.main_window import BFSBWindow
 
-            app = QApplication.instance()
-            target = None
-            if app is not None:
-                for w in app.topLevelWidgets():
-                    if isinstance(w, BFSBWindow):
-                        target = w
-                        break
-            if target is None:
-                return fn(None)
-            box, err, done = [], [], threading.Event()
-
-            def _run() -> None:
-                try:
-                    box.append(fn(target))
-                except BaseException as e:  # noqa: BLE001
-                    err.append(e)
-                finally:
-                    done.set()
-
-            QTimer.singleShot(0, _run)
-            if not done.wait(timeout=timeout):
-                raise TimeoutError("qt hop timed out")
-            if err:
-                raise err[0]
-            return box[0] if box else None
-        except Exception:
+        app = QApplication.instance()
+        if app is None:
             return fn(None)
+        target = None
+        for w in app.topLevelWidgets():
+            if isinstance(w, BFSBWindow):
+                target = w
+                break
+        if target is None:
+            return fn(None)
+
+        box, err, done = [], [], threading.Event()
+
+        def _job() -> None:
+            try:
+                box.append(fn(target))
+            except BaseException as e:  # noqa: BLE001
+                err.append(e)
+            finally:
+                done.set()
+
+        if self._invoker is None:
+            invoker = _MainThreadInvoker()
+            invoker.moveToThread(target.thread())
+            self._invoker = invoker
+        key = uuid.uuid4().hex
+        self._invoker._pending[key] = _job
+        QMetaObject.invokeMethod(
+            self._invoker, "_execute", _Qt.ConnectionType.QueuedConnection, Q_ARG(str, key)
+        )
+        if not done.wait(timeout=timeout):
+            raise TimeoutError("qt hop timed out")
+        if err:
+            raise err[0]
+        return box[0] if box else None
 
     def _refresh_panels(self, main, which: str) -> None:
         """Refresh native side-panel lists. Main-thread only; guarded."""
@@ -395,6 +431,26 @@ class BFSHBServer:
         except Exception:
             return web.json_response({"ok": False})
 
+    async def handle_api_adblock_get(self, request: Request) -> Response:
+        """Current adblocker on/off state (shared with the mitmdump layer)."""
+        try:
+            from bfsb.core.adblock_state import is_adblock_enabled
+
+            return web.json_response({"ok": True, "enabled": bool(is_adblock_enabled())})
+        except Exception:
+            return web.json_response({"ok": False, "enabled": True})
+
+    async def handle_api_adblock_set(self, request: Request) -> Response:
+        """Set the adblocker on/off state (?enabled=1|0)."""
+        enabled = (request.query.get("enabled") or "").strip() not in ("0", "false", "off")
+        try:
+            from bfsb.core.adblock_state import set_adblock_enabled
+
+            set_adblock_enabled(enabled)
+            return web.json_response({"ok": True, "enabled": enabled})
+        except Exception:
+            return web.json_response({"ok": False, "enabled": enabled})
+
     async def handle_api_history(self, request: Request) -> Response:
         """JSON feed of recent history for the in-page history view."""
         try:
@@ -430,6 +486,10 @@ class BFSHBServer:
         if not query:
             raise web.HTTPFound("/")
 
+        # PERF-DEBUG(phase1): measure query intake stages — remove after phase 1.
+        import time as _ptime
+        _t_submit = _ptime.perf_counter()
+
         # Log the search itself so History reflects what was asked,
         # not just the pages later visited. Best-effort.
         try:
@@ -443,12 +503,14 @@ class BFSHBServer:
             )
         except Exception:
             pass
+        _t_history = _ptime.perf_counter()  # PERF-DEBUG(phase1)
 
         agg: Optional[AggregateResponse] = None
         try:
             agg = await search_async(query)
         except Exception as e:
             print(f"[search] failure: {type(e).__name__}: {e}", flush=True)
+        _t_agg = _ptime.perf_counter()  # PERF-DEBUG(phase1)
 
         shown = list(agg.results[:12]) if agg and agg.results else []
         results_html = (
@@ -471,6 +533,15 @@ class BFSHBServer:
             RESULTS_HTML=results_html,
             INFOBOX_HTML=infobox_html,
             BOOKMARKS_JSON=self._bookmarks_json(),
+        )
+        # PERF-DEBUG(phase1): query intake stage table — remove after phase 1.
+        _t_render = _ptime.perf_counter()
+        print(
+            f"[PERF] search q={query!r} submit->history={(_t_history-_t_submit)*1000:.1f}ms "
+            f"history->agg={(_t_agg-_t_history)*1000:.1f}ms "
+            f"agg->render={(_t_render-_t_agg)*1000:.1f}ms "
+            f"server_total={(_t_render-_t_submit)*1000:.1f}ms results={len(shown)}",
+            flush=True,
         )
         return web.Response(text=html, content_type="text/html")
 
@@ -738,18 +809,8 @@ class BFSHBServer:
     # primitive on the main window.
     _TEST_ACTIONS: dict[str, str] = {
         "newTab": "new_tab",
-        "closeTab": "_close_active_tab",
-        "toggleSidebar": "_toggle_side_panel",
+        "closeTab": "close_tab",
         "showMainMenu": "_show_main_menu",
-        "openInNewTab": "_open_in_active_tab",
-        # Hover handlers — exercise the popover code path without
-        # ydotool. ydotool moves the real host cursor, so the
-        # harness uses these server-driven routes instead. We call
-        # `_on_menu_row_hovered` directly with the action object
-        # recorded in `_show_main_menu`.
-        "hoverBookmarks": "_test_hover_bookmarks",
-        "hoverHistory": "_test_hover_history",
-        "closePopovers": "_test_close_popovers",
     }
 
     async def handle_test_action(self, request: Request) -> Response:
@@ -794,46 +855,17 @@ class BFSHBServer:
         else:
             coerced = None
 
-        # Hop to the Qt main thread if we aren't already there.
-        app = QApplication.instance()
-        if app is not None and main is not app:
-            main_qthread = main.thread()
-            if main_qthread is not app.thread():
-                import threading
-                done = threading.Event()
-                error: list[BaseException] = []
-                def _run_on_main() -> None:
-                    try:
-                        if coerced is None:
-                            method()
-                        else:
-                            method(coerced)
-                    except BaseException as e:  # noqa: BLE001
-                        error.append(e)
-                    finally:
-                        done.set()
-                QTimer.singleShot(0, _run_on_main)
-                # QTimer.singleShot posts a 0-delay timer event to the
-                # main thread's event loop. We block here on a
-                # threading.Event; the main thread fires _run_on_main
-                # and sets the event when done.
-                if not done.wait(timeout=10):
-                    raise web.HTTPInternalServerError(
-                        reason="timeout waiting for main thread to run test action",
-                    )
-                if error:
-                    raise error[0]
-            else:
-                # Already on the main thread.
-                if coerced is None:
-                    method()
-                else:
-                    method(coerced)
-        else:
+        # Run on the Qt main thread (queued via _MainThreadInvoker).
+        def _call(main):
+            if main is None:
+                raise web.HTTPServiceUnavailable(reason="main window not registered with the server")
             if coerced is None:
                 method()
             else:
                 method(coerced)
+            return True
+
+        self._run_on_qt(_call)
         return web.json_response({
             "action": name,
             "method": method_name,
@@ -925,36 +957,22 @@ class BFSHBServer:
             else:
                 snap["view_count"] = 0
 
+            # Native chrome visibility + the URL it would show. The chrome
+            # must be hidden on BFSB pages and visible on external sites.
+            chrome = getattr(main, "_chrome", None)
+            if chrome is not None:
+                snap["chrome_visible"] = chrome.isVisible()
+            view = main._get_current_view() if hasattr(main, "_get_current_view") else None
+            snap["current_url"] = (
+                (getattr(main, "_view_urls", {}).get(view) or view.url().toString())
+                if view is not None else ""
+            )
+
             return snap
 
-        # Hop to the Qt main thread.
-        app = QApplication.instance()
-        if app is not None and main is not app:
-            main_qthread = main.thread()
-            if main_qthread is not app.thread():
-                import threading
-                done = threading.Event()
-                result_box: list[dict] = []
-                error: list[BaseException] = []
-                def _run_on_main() -> None:
-                    try:
-                        result_box.append(_snapshot())
-                    except BaseException as e:  # noqa: BLE001
-                        error.append(e)
-                    finally:
-                        done.set()
-                QTimer.singleShot(0, _run_on_main)
-                if not done.wait(timeout=10):
-                    raise web.HTTPInternalServerError(
-                        reason="timeout waiting for main thread to read state",
-                    )
-                if error:
-                    raise error[0]
-                return web.json_response(result_box[0])
-            else:
-                return web.json_response(_snapshot())
-        else:
-            return web.json_response(_snapshot())
+        # Run on the Qt main thread (queued via _MainThreadInvoker).
+        snap = self._run_on_qt(lambda _main: _snapshot())
+        return web.json_response(snap)
 
     async def start(self) -> None:
         """Start the server."""
