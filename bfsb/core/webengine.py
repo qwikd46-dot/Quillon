@@ -11,7 +11,9 @@ from PyQt6.QtWebEngineCore import (
     QWebEngineProfile,
     QWebEngineSettings,
     QWebEngineUrlRequestInterceptor,
+    QWebEngineUrlRequestJob,
     QWebEngineUrlScheme,
+    QWebEngineUrlSchemeHandler,
     QWebEngineScript,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -229,7 +231,10 @@ def _register_bfsb_scheme() -> None:
         scheme.setFlags(
             QWebEngineUrlScheme.Flag.LocalScheme
             | QWebEngineUrlScheme.Flag.LocalAccessAllowed
-            | QWebEngineUrlScheme.Flag.NoAccessAllowed
+            | QWebEngineUrlScheme.Flag.SecureScheme
+            | QWebEngineUrlScheme.Flag.CorsEnabled
+            | QWebEngineUrlScheme.Flag.FetchApiAllowed
+            | QWebEngineUrlScheme.Flag.ContentSecurityPolicyIgnored
         )
         QWebEngineUrlScheme.registerScheme(scheme)
         _bfsb_scheme_registered = True
@@ -737,11 +742,33 @@ class BFSBPage(SafePage):
         popup_view.show()
         return popup_page
 
+    def _schedule_blank_restore(self) -> None:
+        """Restore the page after a rejected bfsb:// navigation.
+
+        Chromium commits rejected navigations as ``about:blank#blocked``,
+        which blanks the view. If no real navigation is in flight shortly
+        after the action, put the last real URL back.
+        """
+        from PyQt6.QtCore import QTimer as _QTimer
+
+        def _restore() -> None:
+            try:
+                view = self.view()
+                if view is None or view.isLoading():
+                    return  # a real navigation is already in flight
+                current = view.url().toString()
+                if current.startswith(("about:blank", "bfsb://")) and self._last_real_url:
+                    view.setUrl(QUrl(self._last_real_url))
+            except Exception:
+                pass
+
+        _QTimer.singleShot(250, _restore)
+
     def _track_real_url(self, url: QUrl) -> None:
         """Save the latest non-bfsb/non-blocked URL as the 'real' URL.
 
-        Used by the main window to restore the address bar after Chromium
-        commits `about:blank#blocked` for rejected navigation requests
+        Used to restore the view after Chromium commits
+        `about:blank#blocked` for rejected navigation requests
         (e.g. `bfsb://about` clicks).
         """
         url_str = (url.toString() if hasattr(url, "toString") else str(url)) or ""
@@ -803,15 +830,25 @@ class BFSBPage(SafePage):
                         print(f"[BFSBPage] -> close_tab({query['index'][0]})")
                         main.close_tab(int(query['index'][0]))
                 elif url_lower.startswith("bfsb://newtab"):
-                    print("[BFSBPage] -> new_tab()")
-                    main.new_tab()
+                    from urllib.parse import urlparse, parse_qs
+                    parsed = urlparse(url_str)
+                    query = parse_qs(parsed.query)
+                    if 'url' in query:
+                        print(f"[BFSBPage] -> new_tab({query['url'][0]})")
+                        main.new_tab(query['url'][0])
+                    else:
+                        print("[BFSBPage] -> new_tab()")
+                        main.new_tab()
                 elif url_lower.startswith("bfsb://about"):
                     print("[BFSBPage] -> _show_about_dialog()")
                     main._show_about_dialog()
                 elif url_lower.startswith("bfsb://preferences"):
                     print("[BFSBPage] -> _show_preferences_dialog()")
                     main._show_preferences_dialog()
-            # Clear URL to prevent fallback navigation
+            # Clear URL to prevent fallback navigation, then restore the
+            # page the user was on: a rejected bfsb:// navigation would
+            # otherwise commit about:blank#blocked and blank the screen.
+            self._schedule_blank_restore()
             return False
 
         # Block dangerous file extensions
@@ -950,6 +987,63 @@ class BFSBPage(SafePage):
 
         return url
 
+class BFSBSchemeHandler(QWebEngineUrlSchemeHandler):
+    """Handles every bfsb:// request (fetch() or navigation).
+
+    GUI actions (new tab, switch tab, close tab, back/forward/reload,
+    navigate) are issued from the page as ``fetch('bfsb://…')``. The
+    handler dispatches them to the main window and replies with a tiny
+    body. Because fetch() never navigates the page, an action can no
+    longer blank the current tab (the old ``location.href='bfsb://…'``
+    flow committed ``about:blank#blocked`` and blacked the screen).
+    """
+
+    _main_window = None  # set by BFSBWindow after profile creation
+
+    def requestStarted(self, job: QWebEngineUrlRequestJob) -> None:
+        url = job.requestUrl().toString()
+        try:
+            main = BFSBSchemeHandler._main_window
+            if main is not None and url.startswith("bfsb://"):
+                # navigate() dispatches every bfsb:// action form.
+                main.navigate(url)
+        except Exception as e:
+            print(f"[BFSBSchemeHandler] action failed for {url}: {e}")
+        finally:
+            self._reply_ok(job)
+
+    @staticmethod
+    def _reply_ok(job: QWebEngineUrlRequestJob) -> None:
+        try:
+            from PyQt6.QtCore import QBuffer, QIODevice
+
+            buf = QBuffer(job)  # parented to the job → lives until replied
+            buf.setData(b"ok")
+            buf.open(QIODevice.OpenModeFlag.ReadOnly)
+            job.reply(b"text/plain", buf)
+        except Exception:
+            try:
+                job.fail(QWebEngineUrlRequestJob.ErrorDeny)
+            except Exception:
+                pass
+
+
+_bfsb_scheme_handler: BFSBSchemeHandler | None = None
+
+
+def get_bfsb_scheme_handler() -> BFSBSchemeHandler:
+    """Process-wide bfsb:// scheme handler (created once)."""
+    global _bfsb_scheme_handler
+    if _bfsb_scheme_handler is None:
+        _bfsb_scheme_handler = BFSBSchemeHandler()
+    return _bfsb_scheme_handler
+
+
+def set_bfsb_action_target(window) -> None:
+    """Point the bfsb:// scheme handler at the main window."""
+    BFSBSchemeHandler._main_window = window
+
+
 def create_web_profile() -> QWebEngineProfile:
     """Create and configure WebEngine profile."""
     from PyQt6.QtWidgets import QApplication
@@ -962,6 +1056,8 @@ def create_web_profile() -> QWebEngineProfile:
     _ensure_mitmproxy_ca_in_nss()
 
     profile = QWebEngineProfile(APP_CONFIG.WINDOW_TITLE, app)
+    # bfsb:// action requests (fetch-based GUI actions) dispatch here.
+    profile.installUrlSchemeHandler(b"bfsb", get_bfsb_scheme_handler())
     # Disk HTTP cache: re-downloading every image/script/font on every page
     # load makes heavy sites (WhatsApp Web, YouTube) crawl. Keep a bounded
     # on-disk cache instead of NoCache.
