@@ -3,1024 +3,1419 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BFSB — Browser For Safe Browsing</title>
+<title>BFSB — New Tab</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html {
-    height: 100%;
-    width: 100%;
+  :root {
+    --bg: #0e1220;
+    --bg-tab: #171c33;
+    --bg-side: #0a0e1a;
+    --bg-hover: #181e3d;
+    --card-bg: #131830;
+    --card-border: #2b3355;
+    --border: #232a4a;
+    --text: #e8eaf2;
+    --text-dim: #9aa0b5;
+    --text-faint: #6b7194;
+    --accent: #7b5cff;
+    --accent-soft: rgba(123, 92, 255, .15);
+    --result-link: #7c9bff;
+    --green: #3ecf8e;
   }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #1a1a2e;
-    color: #e0e0e0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+  }
+
+  /* ================= SIDEBAR ================= */
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 232px;
+    background: var(--bg-side);
+    border-right: 1px solid #161c33;
     display: flex;
     flex-direction: column;
+    padding: 18px 12px;
+    z-index: 50;
+    transition: width .25s ease, padding .25s ease;
+  }
+  .sidebar.collapsed {
+    width: 64px;
+    padding: 18px 0;
+  }
+  .sidebar.collapsed .side-logo .name,
+  .sidebar.collapsed .side-section,
+  .sidebar.collapsed .side-item span,
+  .sidebar.collapsed .side-footer .side-item span {
+    display: none;
+  }
+  .sidebar.collapsed .side-logo {
+    justify-content: center;
+    padding: 4px 0 20px 0;
+  }
+  .sidebar.collapsed .side-item {
+    justify-content: center;
+    padding: 10px 0;
+  }
+  .sidebar.collapsed .side-footer .side-item {
+    justify-content: center;
+    padding: 10px 0;
+  }
+
+  .sidebar-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    margin: 0 auto 16px auto;
+  }
+  .sidebar-toggle:hover { background: transparent; color: var(--accent); }
+  .sidebar-toggle svg { width: 16px; height: 16px; stroke: currentColor; }
+  .sidebar .sidebar-toggle { display: flex; }
+  .side-foot-row { display: flex; align-items: center; gap: 8px; }
+  .side-foot-row .side-item { flex: 1; min-width: 0; }
+  .side-foot-row .sidebar-toggle { margin: 0; flex-shrink: 0; }
+
+  .side-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 10px 20px 10px;
+  }
+  .side-logo .mark {
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #7b5cff, #4f7cff);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px; color: #fff;
+  }
+  .side-logo img.mark { background: none; }
+  .side-logo .name { font-size: 16px; font-weight: 600; letter-spacing: .5px; }
+  .side-logo .name small { display:block; font-size: 10px; font-weight: 400; color: var(--text-faint); letter-spacing: .3px; }
+
+  .side-section {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-faint);
+    padding: 14px 12px 8px 12px;
+  }
+
+  .side-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease;
+  }
+  .side-item svg { width: 18px; height: 18px; flex-shrink: 0; stroke: currentColor; }
+  .side-item:hover { background: var(--bg-hover); color: var(--text); }
+  .side-item.active svg { stroke: var(--accent); }
+
+  .side-footer {
+    margin-top: auto;
+    border-top: 1px solid #161c33;
+    padding-top: 10px;
+  }
+
+  /* ================= MAIN COLUMN ================= */
+  .main-col {
+    margin-left: 232px;
     min-height: 100vh;
-    width: 100%;
-    overflow: auto;
-  }
-
-  /* ══════════════════════════════════════════
-       TOP TOOLBAR — Native BFSB style
-       ══════════════════════════════════════════ */
-    .bfsb-toolbar {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      background: #13132a;
-      border: none;
-      border-bottom: 1px solid #2a2a48;
-      border-radius: 0;
-      padding: 6px 12px;
-      height: 52px;
-      width: 100%;
-      margin: 0;
-      flex-shrink: 0;
-      user-select: none;
-    }
-  .bfsb-toolbar:hover { background: #13132a; }
-  .bfsb-toolbar:focus-within { background: #13132a; }
-
-  /* Nav buttons (back/forward/reload) */
-  .bfsb-nav-btn {
-    background: transparent;
-    border: none;
-    color: #666680;
-    cursor: pointer;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    font-weight: 400;
-    flex-shrink: 0;
-    transition: background 0.15s, color 0.15s;
-    outline: none;
-  }
-  .bfsb-nav-btn:hover {
-    background: rgba(124, 106, 245, 0.15);
-    color: #7c6af5;
-  }
-  .bfsb-nav-btn:active {
-    background: rgba(124, 106, 245, 0.2);
-  }
-  .bfsb-nav-btn:disabled { color: #404058; }
-
-  /* Pill URL bar wrapper — this is the actual pill */
-  .bfsb-urlbar-wrap {
-    flex: 1;
+    flex-direction: column;
+    transition: margin-left .25s ease;
     position: relative;
-    display: flex;
-    align-items: center;
-    background: #0e0e22;
-    border: 1.5px solid #2a2a45;
-    border-radius: 999px;
-    padding: 0 10px 0 32px;
-    min-width: 0;
-    overflow: hidden;
-    height: 36px;
-    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
   }
-  .bfsb-urlbar-wrap:hover {
-    border-color: #3a3a5c;
-    background: #111128;
+  .main-col.sidebar-collapsed {
+    margin-left: 64px;
   }
-  .bfsb-urlbar-wrap:focus-within {
-    border-color: #7c6af5;
-    background: #0a0a1e;
-    box-shadow: 0 0 0 3px rgba(124,106,245,0.15);
-  }
-
-  /* Lock icon */
-  .bfsb-lock-icon {
+  #dotsCanvas {
     position: absolute;
-    left: 12px;
-    width: 14px;
-    height: 14px;
-    color: #666680;
-    flex-shrink: 0;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
     pointer-events: none;
-    transition: color 0.2s;
+    display: none;
   }
-  .bfsb-toolbar:focus-within .bfsb-lock-icon { color: #7c6af5; }
+  .main-col.is-home #dotsCanvas { display: block; }
+  .main-col.is-home .view,
+  .main-col.is-home footer { position: relative; z-index: 1; }
 
-  /* URL Input */
-  .bfsb-url-input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    color: #e8e8f0;
-    font-family: 'Fira Mono', 'Consolas', monospace;
-    font-size: 16px;
-    padding: 12px 0;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    caret-color: #7c6af5;
-    outline: none;
-  }
-  .bfsb-url-input::placeholder { color: #666680; }
-  .bfsb-url-input:focus { color: #e8e8f0; }
-
-  /* Bookmark button */
-  .bfsb-bookmark-btn {
-    background: transparent;
-    border: none;
-    color: #666680;
-    cursor: pointer;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    outline: none;
-    transition: background 0.2s, color 0.2s;
-  }
-  .bfsb-bookmark-btn:hover {
-    color: #7c6af5;
-    background: rgba(124, 106, 245, 0.15);
-  }
-  .bfsb-bookmark-btn:focus { outline: none; }
-
-  /* Menu button */
-  .bfsb-menu-btn {
-    background: transparent;
-    border: none;
-    color: #666680;
-    cursor: pointer;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    font-weight: 400;
-    flex-shrink: 0;
-    outline: none;
-    transition: background 0.15s, color 0.15s;
-  }
-  .bfsb-menu-btn:hover {
-    background: rgba(124, 106, 245, 0.15);
-    color: #7c6af5;
-  }
-  .bfsb-menu-btn:active {
-      background: rgba(124, 106, 245, 0.2);
-    }
-
-    /* Progress bar under URL bar */
-    .bfsb-progress-wrap {
-      position: fixed;
-      top: 88px; /* tab bar (36px) + toolbar (52px) */
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: transparent;
-      z-index: 1000;
-      pointer-events: none;
-    }
-    .bfsb-progress-bar {
-      height: 100%;
-      background: linear-gradient(90deg, #7c6af5, #00d4aa);
-      border-radius: 0 2px 2px 0;
-      box-shadow: 0 0 8px rgba(124,106,245,0.6), 0 0 16px rgba(0,212,170,0.4);
-      transition: width 0.1s ease-out, opacity 0.2s ease;
-      opacity: 1;
-      transform-origin: left center;
-    }
-    .bfsb-progress-bar.complete {
-      animation: progressComplete 0.3s ease forwards;
-    }
-    @keyframes progressComplete {
-      0% { width: 100%; opacity: 1; }
-      100% { width: 100%; opacity: 0; transform: scaleX(0); transform-origin: right center; }
-    }
-
-    /* ══════════════════════════════════════════
-         TAB BAR
-         ══════════════════════════════════════════ */
-      .bfsb-tab-bar {
-      display: flex;
-      align-items: flex-end;
-      gap: 2px;
-      padding: 6px 12px 0;
-      height: 36px;
-      width: 100%;
-      background: #0f0f1e;
-      overflow-x: auto;
-      scrollbar-width: none;
-      border-bottom: 1px solid #2a2a48;
-      flex-shrink: 0;
-    }
-  .bfsb-tab-bar::-webkit-scrollbar { display: none; }
-
-  .bfsb-tab {
+  /* ---------- Top bar (aligned with search bar) ---------- */
+  .topbar {
+    max-width: 860px;
+    width: 100%;
+    margin: 0 auto;
     display: flex;
     align-items: center;
     gap: 6px;
-    background: #18182a;
-    border: 1px solid #2a2a48;
-    border-bottom: none;
-    border-radius: 6px 6px 0 0;
-    padding: 4px 10px 4px 8px;
-    height: 28px;
-    min-width: 120px;
-    max-width: 220px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-    position: relative;
-    flex: 1 1 auto;
+    padding: 10px 16px 0 16px;
   }
-  .bfsb-tab:hover { background: #1e1e32; }
-  .bfsb-tab.active {
-    background: #1a1a2e;
-    border-color: #3a3a5c;
-    border-bottom: 1px solid #1a1a2e;
-    margin-bottom: -1px;
+
+  .tab {
+    background: var(--bg-tab);
+    border-radius: 10px;
+    padding: 9px 14px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 170px;
   }
-  .bfsb-tab.favicon { width: 16px; height: 16px; border-radius: 2px; background: #3a3a5c; flex-shrink: 0; }
-  .bfsb-tab-title { color: #b8b8c8; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-  .bfsb-tab.active .bfsb-tab-title { color: #e8e8f0; font-weight: 600; }
-  .bfsb-tab-close {
-    background: transparent;
-    border: none;
-    color: #4a4a6a;
-    cursor: pointer;
-    width: 16px;
-    height: 16px;
+  .tab .close { color: var(--text-dim); font-size: 13px; cursor: pointer; }
+  .tab .close:hover { color: var(--text); }
+  .tab-strip { display: flex; gap: 8px; flex: 0 1 auto; min-width: 0; overflow-x: auto; }
+  .tab { cursor: pointer; user-select: none; flex-shrink: 0; border: 1px solid var(--card-border); background: #1c2242; position: relative; padding-right: 32px; transition: transform .22s ease, opacity .2s ease, background .15s ease, border-color .15s ease; }
+
+  .tab.active-tab { border-color: var(--accent); background: #262c55; }
+  .tab.dragging { opacity: .4; }
+  .tab .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 132px; }
+  .tab .close { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); }
+
+  .new-tab-btn {
+    width: 32px; height: 32px;
     border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    font-weight: 600;
-    flex-shrink: 0;
-    opacity: 0;
-    transition: all 0.15s;
-  }
-  .bfsb-tab:hover .bfsb-tab-close { opacity: 1; }
-  .bfsb-tab-close:hover { background: #e03030; color: white; }
-  .bfsb-tab-close:active { background: #ff3e3e; }
-
-  /* New tab button */
-  .bfsb-new-tab-btn {
     background: transparent;
-    border: none;
-    color: #5a5a7a;
+    border: 1px solid var(--card-border);
+    color: var(--text-dim);
+    font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
     cursor: pointer;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    font-weight: 700;
-    padding-bottom: 2px;
     flex-shrink: 0;
-    transition: background 0.15s, color 0.15s;
   }
-  .bfsb-new-tab-btn:hover { background: #1e1e32; color: #9090b8; }
+  .new-tab-btn:hover { background: var(--bg-hover); color: var(--text); }
 
-  /* ═══════════════════════════════════════════
-     HOME PAGE CONTENT
-     ═══════════════════════════════════════════ */
-  .main {
+  /* ---------- Address bar ---------- */
+  .address-row {
+    max-width: 860px;
+    width: 100%;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px 16px 0 16px;
+    position: relative;
+    transform: translateX(-114px);
+  }
+
+  .address-bar {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    padding: clamp(20px, 5vh, 40px) clamp(16px, 4vw, 24px);
-    min-height: 0;  /* Allow flex item to shrink below content size */
-  }
-  .logo-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-bottom: clamp(24px, 4vh, 36px);
-    transition: opacity 0.35s ease, transform 0.35s ease, margin 0.35s ease, height 0.35s ease;
-    opacity: 1;
-    transform: translateY(0);
-    height: auto;
-  }
-  .logo-wrap.hidden {
-    opacity: 0;
-    transform: translateY(-18px);
-    pointer-events: none;
-    height: 0;
-    margin-bottom: 0;
-    overflow: hidden;
-  }
-  .logo-wrap img { width: clamp(180px, 35vw, 260px); height: auto; }
-
-  .search-container {
-    width: 100%;
-    max-width: 580px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    position: relative;
-    z-index: 5;
-    transform: translateY(-30px) scale(0.92);
-    transform-origin: center bottom;
-    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-  }
-  .search-container.focused { transform: translateY(0) scale(1); }
-  .search-box {
-    width: 100%;
+    background: #141933;
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 11px 18px;
     display: flex;
     align-items: center;
-    background: #252540;
-    border: 1.5px solid #3a3a5c;
-    border-radius: 40px;
-    padding: 0 20px;
-    transition: all 0.25s ease;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    gap: 14px;
+    color: var(--text-dim);
+    font-size: 14px;
   }
-  .search-box:focus-within {
-    border-color: #7c6af5;
-    box-shadow: 0 0 0 3px rgba(124,106,245,0.18), 0 2px 16px rgba(0,0,0,0.4);
-    background: #2a2a50;
-  }
-  .search-box input {
+  .address-bar:focus-within { border-color: var(--accent); }
+  .address-bar input {
     flex: 1;
     background: transparent;
     border: none;
     outline: none;
-    color: #e8e8f0;
-    font-size: 16px;
-    padding: 14px 0;
-    caret-color: #7c6af5;
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
   }
-  .search-box input::placeholder { color: #666680; }
-  .search-btn {
-    background: none;
+  .address-bar input::placeholder { color: var(--text-dim); }
+  .address-bar .icon { cursor: pointer; opacity: .85; display:flex; }
+  .address-bar .icon:hover { opacity: 1; }
+  .address-bar svg { width: 15px; height: 15px; stroke: currentColor; }
+  .address-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .refresh-btn {
+    background: transparent;
     border: none;
+    color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center;
     cursor: pointer;
-    padding: 8px;
-    color: #7c6af5;
+    padding: 6px;
+    margin-top: 7px;
+    opacity: .85;
+    flex-shrink: 0;
+  }
+  .refresh-btn:hover { color: var(--text); opacity: 1; background: transparent; }
+  .nav-btn { opacity: .35; }
+  .nav-btn.nav-active { opacity: 1; color: #fff; }
+  .refresh-btn svg { width: 18px; height: 18px; stroke: currentColor; }
+  .refresh-btn.spinning svg { animation: spin .8s linear; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  .search-progress {
+    width: auto;
+    height: 2px;
+    background: transparent;
+    border-radius: 2px;
+    overflow: hidden;
+    visibility: hidden;
+    margin: 2px 14px 0 14px;
+  }
+  .search-progress.active { visibility: visible; }
+  .search-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #7b5cff, #4f7cff);
+    border-radius: 2px;
+  }
+  .search-progress.active .search-progress-bar { animation: progressLoad 1.2s ease-out forwards; }
+  @keyframes progressLoad {
+    0% { width: 0%; }
+    100% { width: 100%; }
+  }
+
+  /* ================= VIEWS ================= */
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ---------- Home ---------- */
+  .home-wrap {
+    max-width: 860px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 0 16px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .bookmarks-label { font-size: 16px; margin-bottom: 16px; text-align: center; }
+  .bookmarks-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 714px;
+    margin: 0;
+  }
+  .bookmarks {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .bookmark {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    height: 72px;
+    width: 165px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
+    gap: 12px;
+    padding: 14px;
+    font-size: 14px;
+    color: #7b5cff;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease;
+  }
+  .bookmark:hover { background: var(--bg-hover); border-color: #7b5cff; color: var(--text); transform: scale(1.03); }
+  .bookmark .favicon {
+    width: 22px; height: 22px;
+    border-radius: 5px;
+    background: #1d2444;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .bookmark .favicon img { width: 100%; height: 100%; object-fit: cover; border-radius: 5px; }
+
+  /* ---------- Results ---------- */
+  .results {
+    max-width: 860px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 34px 16px 60px 16px;
+  }
+  #view-results > .topbar,
+  #view-results > .address-row { margin-left: -16px; margin-right: -16px; max-width: none; }
+  .results-meta {
+    font-size: 13px;
+    color: var(--text-faint);
+    margin-bottom: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 10px;
+    padding-right: 146px;
+  }
+  .results-meta .clear {
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 4px 10px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+  }
+  .results-meta .clear:hover { background: var(--bg-hover); color: var(--text); }
+  .results-body { display: flex; gap: 64px; align-items: flex-start; }
+  #resultsList { flex: 1; min-width: 0; }
+  .about-card {
+    width: 260px; flex-shrink: 0;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 18px;
+    transform: translateX(30px);
+  }
+  .about-heading {
+    font-size: 11px; text-transform: uppercase;
+    letter-spacing: 1.2px; color: var(--text-faint);
+    margin-bottom: 12px;
+  }
+  .about-head { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+  .about-fav {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: #1d2444; display: inline-flex;
+    align-items: center; justify-content: center;
+    font-weight: 700; color: var(--text-dim); flex-shrink: 0;
+    position: relative; overflow: hidden;
+  }
+  .about-fav img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; border-radius: 50%;
+  }
+  .about-name { font-size: 16px; color: var(--text); }
+  .about-sub { font-size: 12px; color: var(--text-faint); }
+  .about-desc { font-size: 13px; color: var(--text-dim); line-height: 1.6; margin-bottom: 12px; }
+  .about-link { font-size: 13px; color: var(--result-link); text-decoration: none; }
+  .about-link:hover { text-decoration: underline; }
+  @media (max-width: 760px) {
+    .results-body { flex-direction: column; }
+    .about-card { width: 100%; }
+  }
+
+  .no-results { text-align: center; padding: 60px 0; color: var(--text-dim); }
+  .no-results h2 { color: var(--text); font-weight: 500; margin-bottom: 8px; }
+
+  /* ---------- Server-rendered search results (RESULTS_HTML) ---------- */
+  #resultsList .result-item { margin-bottom: 30px; max-width: 640px; }
+  #resultsList .result-url {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 4px;
+    font-size: 12.5px; color: var(--text-faint);
+  }
+  #resultsList .result-favicon {
+    width: 26px; height: 26px;
     border-radius: 50%;
-    transition: background 0.2s;
+    background: #1d2444;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: var(--text-dim);
+    flex-shrink: 0;
+    position: relative; overflow: hidden;
   }
-  .search-btn:hover { background: rgba(124,106,245,0.15); }
-  .search-btn svg { width: 18px; height: 18px; }
-
-  .footer {
-    padding: clamp(14px, 3vh, 18px);
-    text-align: center;
-    font-size: clamp(11px, 2.2vw, 12px);
-    color: #404058;
-    letter-spacing: 0.03em;
-    line-height: 1.8;
+  #resultsList .result-favicon img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; border-radius: 50%;
   }
-  .footer .brand { color: #7c6af5; font-weight: 600; letter-spacing: 0.05em; }
-    .footer .reg { font-size: clamp(9px, 1.8vw, 10px); vertical-align: super;  }
-    .footer .byline { color: #55556a; font-size: clamp(10px, 2vw, 11px); margin-top: 2px;  }
+  #resultsList .result-domain { font-size: 12.5px; color: var(--text-faint); }
+  #resultsList .result-title {
+    font-size: 19px; font-weight: 500;
+    color: var(--result-link);
+    text-decoration: none;
+    display: block;
+  }
+  #resultsList .result-title:hover { text-decoration: underline; }
+  #resultsList .result-desc {
+    font-size: 13.5px; color: var(--text-dim);
+    line-height: 1.55; margin-top: 4px;
+  }
+  #resultsList .result-desc b { color: var(--text); font-weight: 600; }
+  #resultsList .result-sources { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  #resultsList .source-tag {
+    font-size: 11px; color: var(--text-faint);
+    background: #1d2444;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2px 10px;
+  }
 
-    /* SEARCH RESULTS PAGE STYLES */
-      .results-layout {
-        width: 100%;
-        max-width: 1200px;
-        margin: 0 auto 0 clamp(48px, 6vw, 80px);
-        padding: clamp(24px, 4vh, 32px) clamp(24px, 4vw, 48px);
-      }
-      .results-header {
-        margin-bottom: clamp(16px, 3vh, 24px);
-      }
-      .results-count {
-        font-size: clamp(12px, 2.5vw, 13px);
-        color: #55556a;
-        letter-spacing: 0.01em;
-      }
-      /* Search bar on results page */
-      .results-search-container {
-        width: 100%;
-        max-width: 580px;
-        margin: 0 0 clamp(12px, 2.5vh, 16px);
-      }
-      .results-search-box {
-        width: 100%;
-        display: flex;
-        align-items: center;
-        background: #252540;
-        border: 1.5px solid #3a3a5c;
-        border-radius: 40px;
-        padding: 0 20px;
-        transition: all 0.25s ease;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-      }
-      .results-search-box:focus-within {
-        border-color: #7c6af5;
-        box-shadow: 0 0 0 3px rgba(124,106,245,0.18), 0 2px 16px rgba(0,0,0,0.4);
-        background: #2a2a50;
-      }
-      .results-search-box input {
-        flex: 1;
-        background: transparent;
-        border: none;
-        outline: none;
-        color: #e8e8f0;
-        font-size: 16px;
-        padding: 14px 0;
-        caret-color: #7c6af5;
-      }
-      .results-search-box input::placeholder { color: #666680; }
-      .results-search-box .search-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 8px;
-        color: #7c6af5;
-        display: flex;
-        align-items: center;
-        border-radius: 50%;
-        transition: background 0.2s;
-      }
-      .results-search-box .search-btn:hover { background: rgba(124,106,245,0.15); }
-      .results-search-box .search-btn svg { width: 18px; height: 18px; }
-      .results-grid {
-        display: flex;
-        gap: clamp(32px, 4vw, 48px);
-      }
-   .results-col {
-     flex: 1;
-     min-width: 0;
-     max-width: 720px;
-   }
-   .infobox-col {
-     flex: 0 0 280px;
-     min-width: 280px;
-     max-width: 300px;
-   }
-   .infobox-col .infobox {
-     background: #1e1e38;
-     border: 1px solid #2a2a48;
-     border-radius: 16px;
-     padding: clamp(20px, 4vw, 24px);
-     position: sticky;
-     top: 100px;
-   }
-   .infobox-title {
-     font-size: clamp(16px, 3vw, 18px);
-     font-weight: 600;
-     color: #e0e0f0;
-     margin-bottom: clamp(12px, 2.5vh, 16px);
-     padding-bottom: clamp(10px, 2vh, 14px);
-     border-bottom: 1px solid #2a2a48;
-   }
-   .infobox-row {
-     display: flex;
-     gap: 10px;
-     margin-bottom: 10px;
-     font-size: clamp(12px, 2.5vw, 13px);
-   }
-   .infobox-key {
-     color: #55556a;
-     min-width: 80px;
-     flex-shrink: 0;
-   }
-   .infobox-val { color: #b8b8d8; }
-   .infobox-links {
-     margin-top: 16px;
-     padding-top: 14px;
-     border-top: 1px solid #2a2a48;
-     display: flex;
-     flex-wrap: wrap;
-     gap: 8px;
-   }
-   .infobox-links a {
-     font-size: clamp(11px, 2.2vw, 12px);
-     color: #7c6af5;
-     text-decoration: none;
-     background: rgba(124,106,245,0.08);
-     border-radius: 6px;
-     padding: 4px 10px;
-     transition: background 0.15s;
-   }
-   .infobox-links a:hover { background: rgba(124,106,245,0.2); }
+  /* ---------- Server-rendered info card (INFOBOX_HTML) ---------- */
+  #aboutCard .infobox { font-size: 13px; }
+  #aboutCard .infobox-head { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+  #aboutCard .infobox-fav {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: #1d2444; display: inline-flex;
+    align-items: center; justify-content: center;
+    font-weight: 700; color: var(--text-dim); flex-shrink: 0;
+    position: relative; overflow: hidden;
+  }
+  #aboutCard .infobox-fav img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; border-radius: 50%;
+  }
+  #aboutCard .infobox-title { font-size: 16px; color: var(--text); font-weight: 500; }
+  #aboutCard .infobox-sub { font-size: 12px; color: var(--text-faint); }
+  #aboutCard .infobox-desc { font-size: 13px; color: var(--text-dim); line-height: 1.6; margin-bottom: 12px; }
+  #aboutCard .infobox-row { display: flex; gap: 10px; margin-bottom: 8px; font-size: 13px; }
+  #aboutCard .infobox-key { color: var(--text-faint); min-width: 78px; flex-shrink: 0; }
+  #aboutCard .infobox-val { color: var(--text-dim); }
+  #aboutCard .infobox-links { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px; }
+  #aboutCard .infobox-links a {
+    font-size: 12.5px; color: var(--result-link);
+    text-decoration: none;
+    background: var(--accent-soft);
+    border-radius: 8px;
+    padding: 4px 10px;
+  }
+  #aboutCard .infobox-links a:hover { background: rgba(123, 92, 255, .3); }
 
-   /* Result items within results page */
-   .result-item {
-     margin-bottom: clamp(20px, 3.5vh, 32px);
-     padding-bottom: clamp(20px, 3.5vh, 32px);
-     border-bottom: 1px solid #1e1e38;
-   }
-   .result-item:last-child { border-bottom: none; }
-   .result-url {
-     font-size: clamp(11px, 2.2vw, 12px);
-     color: #7070a0;
-     margin-bottom: 4px;
-     display: flex;
-     align-items: center;
-     gap: 6px;
-   }
-   .result-favicon {
-     width: 16px;
-     height: 16px;
-     border-radius: 2px;
-     background: #3a3a5c;
-     display: inline-block;
-     flex-shrink: 0;
-   }
-   .result-title {
-     font-size: clamp(17px, 3vw, 20px);
-     font-weight: 500;
-     color: #e0e0f0;
-     text-decoration: none;
-     line-height: 1.35;
-     display: block;
-     margin-bottom: 6px;
-     transition: color 0.15s;
-   }
-   .result-title:hover { color: #a89cf5; text-decoration: underline; }
-   .result-desc {
-     font-size: clamp(14px, 2.5vw, 15px);
-     color: #9898b8;
-     line-height: 1.65;
-   }
-   .result-desc b { color: #c0c0d8; font-weight: 600; }
-   .result-sources {
-     margin-top: 10px;
-     display: flex;
-     gap: 8px;
-     flex-wrap: wrap;
-   }
-   .source-tag {
-     font-size: clamp(10px, 2vw, 11px);
-     color: #55556a;
-     background: #1e1e38;
-     border: 1px solid #2a2a48;
-     border-radius: 4px;
-     padding: 2px 8px;
-     cursor: pointer;
-     transition: all 0.15s;
-   }
-   .source-tag:hover { border-color: #7c6af5; color: #a89cf5; }
+  /* ---------- Server-rendered empty state ---------- */
+  .empty-results { text-align: center; padding: 60px 0; color: var(--text-dim); }
+  .empty-results-icon { color: var(--text-faint); margin-bottom: 14px; }
+  .empty-results-title { color: var(--text); font-size: 18px; font-weight: 500; margin-bottom: 8px; }
+  .empty-results-hint { font-size: 13.5px; color: var(--text-dim); }
 
-   body::before {
-    content: "";
+  /* ---------- Panels (Bookmarks / History / Downloads / Privacy / Passwords / Settings) ---------- */
+  .panel {
+    max-width: 860px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 34px 16px 60px 16px;
+  }
+  .panel h2 { font-size: 22px; font-weight: 500; margin-bottom: 6px; }
+  .panel .panel-sub { font-size: 13px; color: var(--text-faint); margin-bottom: 26px; }
+
+  .list-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    transition: border-color .15s ease, transform .15s ease;
+  }
+  .list-item:hover { border-color: #7b5cff; transform: scale(1.015); }
+  .list-item .favicon {
+    width: 34px; height: 34px;
+    border-radius: 9px;
+    background: #1d2444;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .list-item .li-body { flex: 1; min-width: 0; }
+  .list-item .li-title { font-size: 14px; }
+  .list-item .li-sub {
+    font-size: 12px; color: var(--text-faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .list-item .li-action {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .list-item .li-action:hover { background: var(--bg-hover); color: var(--text); }
+  .list-item .li-action.remove-btn { background: transparent; border-color: #7b5cff; color: #7b5cff; }
+  .list-item .li-action.remove-btn:hover { background: #7b5cff; color: #fff; border-color: #7b5cff; box-shadow: 0 0 12px #7b5cff; }
+  .list-item .li-time { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
+
+  .empty-state { text-align: center; padding: 60px 0; color: var(--text-faint); font-size: 14px; }
+  .empty-state svg { width: 44px; height: 44px; stroke: #2b3355; margin-bottom: 14px; }
+
+  /* Toggles */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 15px 16px;
+    margin-bottom: 12px;
+    transition: border-color .15s ease, transform .15s ease;
+  }
+  .toggle-row:hover { border-color: #7b5cff; transform: scale(1.01); }
+  .toggle-row .t-body { flex: 1; }
+  .toggle-row .t-title { font-size: 14px; }
+  .toggle-row .t-sub { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+  .switch {
+    width: 42px; height: 23px;
+    border-radius: 12px;
+    background: #232a4a;
+    position: relative;
+    cursor: pointer;
+    transition: background .18s ease;
+    flex-shrink: 0;
+  }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 17px; height: 17px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: left .18s ease, background .18s ease;
+  }
+  .switch.on { background: var(--accent); }
+  .switch.on::after { left: 22px; background: #fff; }
+
+  .btn {
+    display: inline-block;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--accent);
+    border: none;
+    border-radius: 10px;
+    padding: 10px 18px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
+  .btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
+  #clearHistoryBtn { border-color: #7b5cff; color: #7b5cff; background: transparent; }
+  #clearHistoryBtn:hover { background: #7b5cff; color: #fff; border-color: #7b5cff; box-shadow: 0 0 12px #7b5cff; }
+
+  .settings-group { margin-bottom: 28px; }
+  .settings-group h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-faint);
+    margin-bottom: 12px;
+  }
+  select {
+    background: #141933;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+  }
+
+  .toast {
     position: fixed;
-    top: 30%;
+    bottom: 28px;
     left: 50%;
-    transform: translate(-50%, -50%);
-    width: clamp(300px, 60vw, 600px);
-    height: clamp(150px, 30vw, 300px);
-    background: radial-gradient(ellipse, rgba(124,106,245,0.08) 0%, transparent 70%);
+    transform: translateX(-50%) translateY(80px);
+    background: #161b34;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13.5px;
+    padding: 11px 16px 14px;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    opacity: 0;
+    transition: transform .25s ease, opacity .25s ease;
+    z-index: 200;
     pointer-events: none;
-  }
-
-  /* About Modal */
-  .about-modal {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(8px);
+    display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    gap: 12px;
+    min-width: 240px;
+    max-width: 90vw;
+    overflow: hidden;
   }
-  .about-modal.show { display: flex; }
-  .about-modal .modal-content {
-    background: linear-gradient(180deg, #1e1e32 0%, #18182a 100%);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 18px;
-    width: 100%;
-    max-width: 400px;
-    padding: 32px 28px 24px;
-    box-shadow: 0 24px 48px rgba(0,0,0,0.5);
-    animation: modalIn 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+  .toast-text { flex: 1; text-align: center; }
+  .toast-undo {
+    background: transparent;
+    border: 1px solid #7b5cff;
+    color: #7b5cff;
+    border-radius: 14px;
+    padding: 4px 12px;
+    font-size: 12.5px;
+    cursor: pointer;
+    display: none;
+    font-family: inherit;
+    flex-shrink: 0;
   }
-  @keyframes modalIn {
-    from { opacity: 0; transform: scale(0.95) translateY(10px); }
-    to { opacity: 1; transform: scale(1) translateY(0); }
+  .toast-undo.visible { display: inline-block; }
+  .toast-undo:hover { background: #7b5cff; color: #fff; box-shadow: 0 0 10px #7b5cff; }
+  .toast-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: transparent; }
+  .toast-progress-bar { height: 100%; width: 100%; background: linear-gradient(90deg, #7b5cff, #4f7cff); }
+  .toast.show .toast-progress-bar { animation: toastProgress 3s linear forwards; }
+  @keyframes toastProgress { from { width: 100%; } to { width: 0%; } }
+
+  /* ---------- Footer ---------- */
+  footer {
+    text-align: center;
+    padding: 20px 0 0;
+    font-size: 13px;
+    color: var(--text-faint);
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
   }
-  .about-modal .modal-title { font-size: 22px; font-weight: 700; color: #eeeef8; letter-spacing: -0.02em; text-align: center; margin: 0 0 4px; }
-  .about-modal .modal-subtitle { font-size: 13px; color: #7c6af5; font-weight: 500; text-align: center; margin: 0 0 4px; }
-  .about-modal .modal-version { font-size: 12px; color: #7a7a8a; text-align: center; margin: 0 0 16px; }
-  .about-modal .modal-desc { font-size: 13px; color: #b8b8c8; line-height: 1.6; text-align: center; margin: 0 0 24px; }
-  .about-modal .modal-desc b { color: #eeeef8; font-weight: 600; }
-  .about-modal .modal-detail { font-size: 13px; color: #b8b8c8; line-height: 1.6; text-align: center; margin: 0 0 24px; }
-  .about-modal .modal-detail .dot { color: #7c6af5; }
-  .about-modal .modal-footer { font-size: 11px; color: #3a3a58; text-align: center; margin-top: 16px; }
-  .about-modal .btn-close { width: 100%; padding: 11px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; background: #e03030; color: #fff; letter-spacing: 0.01em; transition: background 0.15s, box-shadow 0.15s; }
-  .about-modal .btn-close:hover { background: #ff3e3e; box-shadow: 0 4px 20px rgba(224,48,48,0.4); }
-  .about-modal .btn-close:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(224,48,48,0.4); }
+  .footer-rights {
+    margin-top: auto;
+    padding: 60px 16px 30px;
+    text-align: center;
+    transform: translateX(-57px);
+  }
+  #footerHomeContent { flex: none; justify-content: flex-start; }
 </style>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════
-     FULL BROWSER CHROME — Tabs on top, URL bar below
-     ═══════════════════════════════════════════ -->
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="side-logo">
+      <img src="/static/bfsb_icon.png" alt="BFSB" class="mark" style="width: 34px; height: 34px; border-radius: 10px;">
+      <div class="name">BFSB<small>Browser For Safe Browsing</small></div>
+    </div>
 
-<!-- Tab Bar — always on top -->
-<div class="bfsb-tab-bar" role="tablist">
-  <div class="bfsb-tab active" role="tab" aria-selected="true">
-    <span class="bfsb-tab-favicon"></span>
-    <span class="bfsb-tab-title">BFSB — Browser For Safe Browsing</span>
-    <button class="bfsb-tab-close" aria-label="Close tab">×</button>
-  </div>
-  <button class="bfsb-new-tab-btn" id="newTabBtn" title="New Tab" aria-label="New Tab">+</button>
-</div>
+    <div class="side-section">Menu</div>
+    <div class="side-item active" data-view="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>
+      <span>Home</span>
+    </div>
+    <div class="side-item" data-view="bookmarks">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>
+      <span>Bookmarks</span>
+    </div>
+    <div class="side-item" data-view="history">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <span>History</span>
+    </div>
+    <div class="side-item" data-view="downloads">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+      <span>Downloads</span>
+    </div>
 
-<!-- Navigation Bar — below tabs -->
-<div class="bfsb-toolbar" role="toolbar">
-  <!-- Nav buttons -->
-  <button class="bfsb-nav-btn" id="btn-back" title="Back" aria-label="Back">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-  </button>
-  <button class="bfsb-nav-btn" id="btn-forward" title="Forward" aria-label="Forward">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-  </button>
-  <button class="bfsb-nav-btn" id="btn-reload" title="Reload" aria-label="Reload">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-  </button>
+    <div class="side-section">Privacy</div>
+    <div class="side-item" data-view="privacy">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="m9 12 2 2 4-4"/></svg>
+      <span>Safe Browsing</span>
+    </div>
+    <div class="side-item" data-view="passwords">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <span>Passwords</span>
+    </div>
 
-  <!-- Pill URL bar -->
-  <div class="bfsb-urlbar-wrap">
-    <svg class="bfsb-lock-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-    </svg>
-    <input type="text" class="bfsb-url-input" id="urlInput" placeholder="Search or enter URL..." spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" />
-    <button class="bfsb-bookmark-btn" id="bookmarkBtn" title="Bookmark" aria-label="Bookmark this page">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-      </svg>
-    </button>
-  </div>
+    <div class="side-footer">
+      <div class="side-foot-row">
+        <div class="side-item" data-view="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>
+          <span>Settings</span>
+        </div>
+        <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar" aria-label="Collapse sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
 
-  <button class="bfsb-menu-btn" id="btn-menu" title="Menu" aria-label="Open browser menu">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
-  </button>
-</div>
+  <!-- ============ MAIN COLUMN ============ -->
+  <div class="main-col is-home" id="mainCol">
+    <canvas id="dotsCanvas"></canvas>
 
-<!-- Progress bar under URL bar -->
-<div class="bfsb-progress-wrap" id="progressWrap">
-  <div class="bfsb-progress-bar" id="progressBar" style="width:0%;"></div>
-</div>
+    <div id="chrome">
+      <!-- Top bar -->
+      <div class="topbar">
+        <div class="tab-strip" id="tabStrip"></div>
+        <div class="new-tab-btn" title="New tab" id="newTabBtn">+</div>
+      </div>
 
-<!-- ═══════════════════════════════════════════
-     CONTENT AREA — Home or Results based on PAGE_TYPE
-     ═══════════════════════════════════════════ -->
-{% if PAGE_TYPE == 'results' %}
-<!-- SEARCH RESULTS PAGE -->
-<main class="main" id="main" style="flex: 1; overflow: auto; padding: 0;">
-  <div class="results-layout">
-    <div class="results-header">
-      <!-- Search bar on results page -->
-      <div class="results-search-container">
-        <div class="results-search-box">
-          <input type="text" id="searchInputResults" placeholder="Search..." autocomplete="off" value="{{ QUERY|default('') }}" />
-          <button class="search-btn" onclick="doSearchResults()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-          </button>
+      <!-- Address bar row -->
+      <div class="address-row">
+        <button class="refresh-btn nav-btn" data-nav="back" title="Back">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+        </button>
+        <button class="refresh-btn nav-btn" data-nav="fwd" title="Forward">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+        </button>
+        <button class="refresh-btn" id="refreshBtn" title="Refresh">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        </button>
+        <div class="address-wrap">
+          <div class="address-bar">
+            <span class="icon" title="Search">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            </span>
+            <input id="searchInput" type="text" placeholder="Search privately or enter URL..." autocomplete="off" value="{{ QUERY|default('') }}">
+            <span class="icon" title="Bookmark this search" id="bookmarkToggle">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>
+            </span>
+            <span class="icon" title="Connection is secure">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            </span>
+          </div>
+          <div class="search-progress" id="searchProgress"><div class="search-progress-bar"></div></div>
         </div>
       </div>
-      <div class="results-count">{{RESULTS_COUNT}}</div>
     </div>
-    <div class="results-grid">
-      <div class="results-col">
-        {{RESULTS_HTML|safe}}
+
+    <!-- ============ HOME VIEW ============ -->
+    <main class="view {% if PAGE_TYPE != 'results' and PAGE_TYPE != 'preferences' %}active{% endif %}" id="view-home">
+      <div class="home-wrap">
       </div>
-      <div class="infobox-col">
-        {{INFOBOX_HTML|safe}}
+    </main>
+
+    <!-- ============ RESULTS VIEW ============ -->
+    <section class="view results {% if PAGE_TYPE == 'results' %}active{% endif %}" id="view-results">
+      <div class="results-meta">
+        <span id="resultsCount">{{ RESULTS_COUNT|default('') }}</span>
+        <span class="clear" id="clearSearch">&#10005;&nbsp; Clear</span>
       </div>
-    </div>
-  </div>
-</main>
-{% else %}
-<!-- HOME PAGE CONTENT -->
-<main class="main" id="main">
-  <div class="search-container">
-    <div class="search-box">
-      <input type="text" id="searchInput" placeholder="Search privately..." autocomplete="off" />
-      <button class="search-btn" onclick="doSearch()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-      </button>
-    </div>
-  </div>
-</main>
-{% endif %}
+      <div class="results-body">
+        <div id="resultsList">{{ RESULTS_HTML|default('')|safe }}</div>
+        <aside class="about-card" id="aboutCard" {% if not INFOBOX_HTML|default('') %}style="display:none"{% endif %}>{{ INFOBOX_HTML|default('')|safe }}</aside>
+      </div>
+    </section>
 
-<footer class="footer">
-  <div><span class="brand">BFSB<span class="reg">&reg;</span></span> &mdash; Browser For Safe Browsing</div>
-  <div class="byline">Created by Binwalk &mdash; All Rights Reserved &copy; 2025</div>
-</footer>
+    <!-- ============ BOOKMARKS VIEW ============ -->
+    <section class="view panel" id="view-bookmarks">
+      <h2>Bookmarks</h2>
+      <p class="panel-sub">Your saved sites. Click one to open it.</p>
+      <div id="bookmarksList"></div>
+    </section>
 
-<!-- About Modal -->
-<div class="about-modal" id="aboutModal" onclick="hideAbout(event)">
-  <div class="modal-content" onclick="event.stopPropagation()">
-    <div class="modal-title">BFSB Browser</div>
-    <div class="modal-subtitle">Browser for Safe Browsing</div>
-    <div class="modal-version">Version 1.0.0</div>
-    <div class="modal-desc">
-      A privacy-focused browser built on <b>Qt WebEngine</b> with a local <b>private search engine</b> instance.
-    </div>
-    <div class="modal-detail">
-      <span class="dot">■</span> Development started: <b>2026</b> by <b>Binwalk</b><br>
-      <span class="dot">■</span> Built with Python 3, PyQt6, QtWebEngine<br>
-      <span class="dot">■</span> Local AI-powered threat blocking
-    </div>
-    <div class="modal-footer" style="color: #7c6af5; font-weight: 500; font-size: 12px; letter-spacing: 0.3px;">BFSB Browser — No tracking • No telemetry</div>
-    <button class="btn-close" onclick="hideAbout(event)">Close</button>
+    <!-- ============ HISTORY VIEW ============ -->
+    <section class="view panel" id="view-history">
+      <h2>History</h2>
+      <p class="panel-sub">Sites you've visited. Click an entry to open it again.</p>
+      <div id="historyList"></div>
+    </section>
+
+    <!-- ============ DOWNLOADS VIEW ============ -->
+    <section class="view panel" id="view-downloads">
+      <h2>Downloads</h2>
+      <p class="panel-sub">Files downloaded with BFSB.</p>
+      <div id="downloadsList"></div>
+    </section>
+
+    <!-- ============ PRIVACY VIEW ============ -->
+    <section class="view panel" id="view-privacy">
+      <h2>Privacy &amp; Security</h2>
+      <p class="panel-sub">Control how BFSB protects you while browsing.</p>
+      <div class="toggle-row">
+        <div class="t-body">
+          <div class="t-title">Safe Browsing</div>
+          <div class="t-sub">Removes dangerous websites from search results</div>
+        </div>
+        <div class="switch on" data-setting="safeBrowsing"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="t-body">
+          <div class="t-title">Adblocker</div>
+          <div class="t-sub">Blocks Ads and trackers from websites that could put potential risk on you</div>
+        </div>
+        <div class="switch on" data-setting="blockTrackers"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="t-body">
+          <div class="t-title">Block third-party cookies</div>
+          <div class="t-sub">Stops other sites from reading cookies they didn't create.</div>
+        </div>
+        <div class="switch" data-setting="blockCookies"></div>
+      </div>
+      </section>
+
+    <!-- ============ PASSWORDS VIEW ============ -->
+    <section class="view panel" id="view-passwords">
+      <h2>Passwords</h2>
+      <p class="panel-sub">Passwords saved in BFSB.</p>
+      <div id="passwordsList"></div>
+    </section>
+
+    <!-- ============ SETTINGS VIEW ============ -->
+    <section class="view panel {% if PAGE_TYPE == 'preferences' %}active{% endif %}" id="view-settings">
+      <h2>Settings</h2>
+      <p class="panel-sub">Customize your browsing experience.</p>
+
+      <div class="settings-group">
+        <h3>Search</h3>
+        <div class="toggle-row">
+          <div class="t-body">
+            <div class="t-title">Default search engine</div>
+            <div class="t-sub">Used when you type in the address bar.</div>
+          </div>
+          <select id="engineSelect">
+            <option value="bfsb">BFSB Safe Search</option>
+            <option value="google">Google</option>
+            <option value="duckduckgo">DuckDuckGo</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <div class="t-body">
+            <div class="t-title">Open results in a new tab</div>
+            <div class="t-sub">Result links open in a new tab instead of the current one.</div>
+          </div>
+          <div class="switch on" data-setting="openInNewTab"></div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <h3>Appearance</h3>
+        <div class="toggle-row">
+          <div class="t-body">
+            <div class="t-title">Show bookmarks on Home</div>
+            <div class="t-sub">Displays the bookmarks row on the Welcome back page.</div>
+          </div>
+          <div class="switch on" data-setting="showBookmarks"></div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <h3>Data</h3>
+        <div class="toggle-row">
+          <div class="t-body">
+            <div class="t-title">Clear history</div>
+            <div class="t-sub">Removes every item from your browsing history.</div>
+          </div>
+          <button class="btn ghost" id="clearHistoryBtn">Clear history</button>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div id="footerHomeContent" class="home-wrap" style="padding: 120px 16px 0; max-width: 860px; margin: 0 auto;">
+        <div id="homeBookmarks">
+          <div class="bookmarks-wrapper">
+            <div class="bookmarks-label">Bookmarks</div>
+            <div class="bookmarks" id="homeBookmarksGrid">{{ HOME_BOOKMARKS_HTML|default('')|safe }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="footer-rights">
+        BFSB<sup>&reg;</sup> &bull; Browser For Safe Browsing<br>
+        A faster, safer browsing experience.
+      </div>
+    </footer>
   </div>
-</div>
 
-<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <div class="toast" id="toast"><span class="toast-text" id="toastText"></span><button class="toast-undo" id="toastUndo">Undo</button><div class="toast-progress"><div class="toast-progress-bar" id="toastProgressBar"></div></div></div>
+
 <script>
-  // Simple bridge object - called from Python via runJavaScript()
-  // Replaces QWebChannel bridge to avoid Mojo IPC segfaults
-  window.bfsbBridge = {
-    // Navigation
-    goBack: function() {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.goBack) window.bridgeCallbacks.goBack();
-    },
-    goForward: function() {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.goForward) window.bridgeCallbacks.goForward();
-    },
-    reload: function() {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.reload) window.bridgeCallbacks.reload();
-    },
-    navigate: function(url) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.navigate) window.bridgeCallbacks.navigate(url);
-    },
-
-    // Query
-    getCurrentUrl: function(callback) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.getCurrentUrl) {
-        window.bridgeCallbacks.getCurrentUrl(callback);
-      }
-    },
-    canGoBack: function(callback) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.canGoBack) {
-        window.bridgeCallbacks.canGoBack(callback);
-      }
-    },
-    canGoForward: function(callback) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.canGoForward) {
-        window.bridgeCallbacks.canGoForward(callback);
-      }
-    },
-
-    // Tabs
-    switchTab: function(index) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.switchTab) window.bridgeCallbacks.switchTab(index);
-    },
-    closeTab: function(index) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.closeTab) window.bridgeCallbacks.closeTab(index);
-    },
-    getTabCount: function(callback) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.getTabCount) {
-        window.bridgeCallbacks.getTabCount(callback);
-      }
-    },
-    getActiveTabIndex: function(callback) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.getActiveTabIndex) {
-        window.bridgeCallbacks.getActiveTabIndex(callback);
-      }
-    },
-    getTabs: function(callback) {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.getTabs) {
-        window.bridgeCallbacks.getTabs(callback);
-      }
-    },
-    newTab: function() {
-      if (window.bridgeCallbacks && window.bridgeCallbacks.newTab) window.bridgeCallbacks.newTab();
-    },
-
-    // Internal: register Python callbacks
-    _registerCallbacks: function(callbacks) {
-      window.bridgeCallbacks = callbacks;
-    }
+  /* ================= Page payload (server-rendered) ================= */
+  window.__BFSB_PAGE__ = {
+    pageType: '{{ PAGE_TYPE|default("home") }}',
+    query: {{ QUERY|default('')|tojson|safe }},
+    savedBookmarks: {{ BOOKMARKS_JSON|default('[]')|safe }}
   };
 
-  // Tab Sync Logic (Python handles via runJavaScript)
-  function syncTabs() {
-    // Python handles tab sync via runJavaScript
+  /* Persisted settings */
+  const DEFAULTS = { safeBrowsing:true, blockTrackers:true, blockCookies:false,
+                     openInNewTab:true, showBookmarks:true, engine:'bfsb' };
+  let settings = { ...DEFAULTS };
+  try { settings = { ...DEFAULTS, ...(JSON.parse(localStorage.getItem('bfsb-settings')) || {}) }; } catch(e) {}
+  function saveSettings() { try { localStorage.setItem('bfsb-settings', JSON.stringify(settings)); } catch(e) {} }
+
+  /* ================= Elements ================= */
+  const $ = id => document.getElementById(id);
+  const input       = $('searchInput');
+  const toast       = $('toast');
+  const sidebar     = $('sidebar');
+  const mainCol     = $('mainCol');
+  const sidebarToggle = $('sidebarToggle');
+  const searchProgress = $('searchProgress');
+  const refreshBtn  = $('refreshBtn');
+  const tabStrip    = $('tabStrip');
+  const chrome      = $('chrome');
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // Periodically sync tabs (Python handles via runJavaScript)
-  // setInterval(syncTabs, 500);
-
-  // ── URL Bar Logic ──
-  const urlInput = document.getElementById('urlInput');
-  const urlWrap = document.querySelector('.bfsb-urlbar-wrap');
-  const toolbar = document.querySelector('.bfsb-toolbar');
-  const lockIcon = document.querySelector('.bfsb-lock-icon');
-  const bookmarkBtn = document.getElementById('bookmarkBtn');
-  const btnBack = document.getElementById('btn-back');
-  const btnForward = document.getElementById('btn-forward');
-  const btnReload = document.getElementById('btn-reload');
-  const btnMenu = document.getElementById('btn-menu');
-
-  // Select all on focus
-  if (urlInput) {
-    urlInput.addEventListener('focus', () => { setTimeout(() => urlInput.select(), 0); });
+  /* Fire-and-forget browser actions (new/switch/close tab, back, reload…).
+     The bfsb:// scheme handler on the Python side dispatches them; fetch()
+     never navigates this page, so an action can never blank the screen. */
+  function bfsbAction(url) {
+    try { fetch(url).catch(function() {}); } catch (e) {}
   }
 
-  // Navigate on Enter (uses bfsb:// scheme for nav, /search for search)
-  if (urlInput) {
-    urlInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const val = urlInput.value.trim();
-        if (!val) return;
-        if (/^https?:\/\//.test(val) || /^localhost/.test(val) || /\.[a-z]{2,}/.test(val)) {
-          const url = /^https?:\/\//.test(val) ? val : 'http://' + val;
-          window.location.href = 'bfsb://navigate?url=' + encodeURIComponent(url);
-        } else {
-          window.location.href = '/search?q=' + encodeURIComponent(val);
-        }
-        urlInput.blur();
-      }
-      if (e.key === 'Escape') {
-        // Python will restore URL on next sync
-        urlInput.blur();
-      }
-    });
-
-    // Restore URL on blur (Python handles sync)
-    urlInput.addEventListener('blur', () => {
-      if (!urlInput.value.trim()) {
-        // Python will sync URL on next timer tick
-      }
-    });
-  }
-
-  // Nav buttons via bfsb:// scheme (handled by Python BFSBPage)
-  if (btnBack) {
-    btnBack.addEventListener('click', () => {
-      console.log('[BFSB JS] Back button clicked');
-      window.location.href = 'bfsb://goBack';
-    });
-  }
-  if (btnForward) {
-    btnForward.addEventListener('click', () => {
-      console.log('[BFSB JS] Forward button clicked');
-      window.location.href = 'bfsb://goForward';
-    });
-  }
-  if (btnReload) {
-    btnReload.addEventListener('click', () => {
-      console.log('[BFSB JS] Reload button clicked');
-      btnReload.style.transform = 'rotate(360deg)';
-      btnReload.style.transition = 'transform 0.4s ease';
-      setTimeout(() => { btnReload.style.transform = ''; btnReload.style.transition = ''; }, 400);
-      window.location.href = 'bfsb://reload';
-    });
-  }
-
-  // Menu button
-  if (btnMenu) {
-    btnMenu.addEventListener('click', () => {
-      console.log('[BFSB JS] Menu button clicked');
-      window.location.href = 'bfsb://about';
-    });
-  }
-
-  // ── Home Page Search Animation ──
-  const searchInput = document.getElementById('searchInput');
-  const searchContainer = document.querySelector('.search-container');
-
-  if (searchInput && searchContainer) {
-    searchInput.addEventListener('focus', () => searchContainer.classList.add('focused'));
-    searchInput.addEventListener('blur', () => searchContainer.classList.remove('focused'));
-    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
-  }
-
-  function searchFor(q) {
-    window.location.href = '/search?q=' + encodeURIComponent(q);
-  }
-  function doSearch() { const q = searchInput?.value.trim(); if (q) searchFor(q); }
-
-  // ── Results Page Search Handler ──
-  const searchInputResults = document.getElementById('searchInputResults');
-  if (searchInputResults) {
-    searchInputResults.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const q = searchInputResults.value.trim();
-        if (q) window.location.href = '/search?q=' + encodeURIComponent(q);
-      }
-    });
-  }
-
-  // ── Progress Bar Logic ──
-  const progressWrap = document.getElementById('progressWrap');
-  const progressBar = document.getElementById('progressBar');
-  let progressAnimationFrame = null;
-
+  /* ================= Progress ================= */
   function showProgress() {
-    progressWrap.style.display = 'block';
-    progressBar.style.width = '0%';
-    progressBar.classList.remove('complete');
-    progressBar.style.opacity = '1';
-    progressBar.style.transform = 'scaleX(1)';
-    progressBar.style.transformOrigin = 'left center';
-    animateProgress(0);
+    searchProgress.classList.remove('active');
+    void searchProgress.offsetWidth;
+    searchProgress.classList.add('active');
+  }
+  function hideProgress() {
+    searchProgress.classList.remove('active');
   }
 
-  function animateProgress(start) {
-    if (start >= 90) return; // Cap at 90% until load finishes
-    const target = start + Math.random() * 5 + 2;
-    progressBar.style.width = target + '%';
-    progressAnimationFrame = requestAnimationFrame(() => animateProgress(target));
+  /* ================= Toast ================= */
+  let toastTimer;
+  function toastMsg(msg) {
+    $('toastText').textContent = msg;
+    $('toastUndo').classList.remove('visible');
+    toast.classList.add('show');
+    const bar = $('toastProgressBar');
+    bar.style.animation = 'none';
+    void bar.offsetWidth;
+    bar.style.animation = '';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
   }
 
-  function completeProgress() {
-    if (progressAnimationFrame) {
-      cancelAnimationFrame(progressAnimationFrame);
-      progressAnimationFrame = null;
-    }
-    progressBar.style.width = '100%';
-    progressBar.classList.add('complete');
-    setTimeout(() => {
-      progressWrap.style.display = 'none';
-      progressBar.style.width = '0%';
-      progressBar.classList.remove('complete');
-    }, 300);
-  }
-
-  // Hook into page load events via bridge
-  // Python handles progress via runJavaScript, so we just track URL changes locally
-  // Ignore bfsb:// internal URLs (they don't represent page loads)
-  function isInternalUrl(url) {
-    return url.startsWith('bfsb://');
-  }
-
-  let lastUrl = window.location.href;
-  setInterval(() => {
-    const currentUrl = window.location.href;
-    if (currentUrl !== lastUrl && !isInternalUrl(currentUrl)) {
-      lastUrl = currentUrl;
+  /* ================= Address bar: search or navigate ================= */
+  function submitAddress(raw) {
+    const val = (raw || '').trim();
+    if (!val) return;
+    if (/^bfsb:\/\//.test(val)) return;
+    if (/^https?:\/\//.test(val) || /^localhost/.test(val) || /\.[a-z]{2,}$/i.test(val) || /\.[a-z]{2,}\//i.test(val)) {
+      const url = /^https?:\/\//.test(val) ? val : 'http://' + val;
+      bfsbAction('bfsb://navigate?url=' + encodeURIComponent(url));
+    } else {
       showProgress();
-      setTimeout(completeProgress, 500);
+      window.location.href = '/search?q=' + encodeURIComponent(val);
     }
-  }, 100);
-
-  // ── Tab Bar Logic ──
-  const tabBar = document.querySelector('.bfsb-tab-bar');
-  const newTabBtn = document.getElementById('newTabBtn');
-
-  // New tab button
-  if (newTabBtn) {
-    newTabBtn.addEventListener('click', () => {
-      window.location.href = 'bfsb://newTab';
-    });
+    input.blur();
   }
 
-  // Tab click to switch
-  if (tabBar) {
-    tabBar.addEventListener('click', (e) => {
-      const tab = e.target.closest('.bfsb-tab');
-      if (tab && !e.target.closest('.bfsb-tab-close')) {
-        const index = Array.from(tabBar.querySelectorAll('.bfsb-tab')).indexOf(tab);
-        if (index >= 0) {
-          window.location.href = 'bfsb://switchTab?index=' + index;
-        }
-      }
-    });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitAddress(input.value);
+    if (e.key === 'Escape') { input.value = window.__BFSB_PAGE__.query || ''; input.blur(); }
+  });
+  input.addEventListener('focus', () => setTimeout(() => input.select(), 0));
 
-    // Tab close button
-    tabBar.addEventListener('click', (e) => {
-      const closeBtn = e.target.closest('.bfsb-tab-close');
-      if (closeBtn) {
-        e.stopPropagation();
-        const tab = closeBtn.closest('.bfsb-tab');
-        const index = Array.from(tabBar.querySelectorAll('.bfsb-tab')).indexOf(tab);
-        if (index >= 0) {
-          window.location.href = 'bfsb://closeTab?index=' + index;
-        }
-      }
-    });
-  }
+  /* ================= Nav buttons (real browser navigation) ================= */
+  refreshBtn.addEventListener('click', () => {
+    refreshBtn.classList.remove('spinning');
+    void refreshBtn.offsetWidth;
+    refreshBtn.classList.add('spinning');
+    bfsbAction('bfsb://reload');
+  });
+  document.querySelectorAll('.nav-btn').forEach(b =>
+    b.addEventListener('click', () => {
+      bfsbAction(b.dataset.nav === 'back' ? 'bfsb://goBack' : 'bfsb://goForward');
+    }));
 
-  // Bookmark toggle
-  bookmarkBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    bookmarkBtn.classList.toggle('active');
+  /* ================= Tab strip (real tabs, synced from the browser) =================
+     The Qt side pushes the real tab list into #tabStrip as
+     <div class="tab" data-index="i"><span class="t">title</span><span class="close">×</span></div>
+     and sets window.__bfsbActiveIndex. We only wire the clicks here. */
+  $('newTabBtn').addEventListener('click', () => bfsbAction('bfsb://newTab'));
+  tabStrip.addEventListener('click', e => {
+    const closeBtn = e.target.closest('.close');
+    if (closeBtn) {
+      e.stopPropagation();
+      const idx = closeBtn.dataset.index;
+      if (idx !== undefined) bfsbAction('bfsb://closeTab?index=' + idx);
+      return;
+    }
+    const tab = e.target.closest('.tab');
+    if (tab && tab.dataset.index !== undefined) {
+      bfsbAction('bfsb://switchTab?index=' + tab.dataset.index);
+    }
   });
 
-  // About Modal
-  function showAbout(e) { e.preventDefault(); aboutModal.classList.add('show'); }
-  function hideAbout(e) { if (e.target === aboutModal || e.target.classList.contains('btn-close')) aboutModal.classList.remove('show'); }
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') aboutModal.classList.remove('show'); });
+  /* ================= Bookmark star (toggles bookmark of this search) ================= */
+  function isBookmarkedCurrent() {
+    const url = window.location.href;
+    return (window.__BFSB_PAGE__.savedBookmarks || []).some(b => b.url === url);
+  }
+  function updateBookmarkIcon() {
+    const btn = $('bookmarkToggle');
+    if (!btn) return;
+    const svg = btn.querySelector('svg');
+    if (isBookmarkedCurrent()) {
+      svg.style.fill = '#7b5cff';
+      svg.style.stroke = '#7b5cff';
+      btn.title = 'Remove bookmark';
+    } else {
+      svg.style.fill = 'none';
+      svg.style.stroke = '';
+      btn.title = 'Bookmark this search';
+    }
+  }
+  $('bookmarkToggle').addEventListener('click', async () => {
+    const url = window.location.href;
+    if (!url.includes('/search?q=')) {
+      toastMsg('Open a search first, then bookmark it');
+      return;
+    }
+    try {
+      const wasBookmarked = isBookmarkedCurrent();
+      const body = new URLSearchParams({ url, title: window.__BFSB_PAGE__.query || 'Search' });
+      await fetch('/api/bookmark/toggle?' + body.toString(), { method: 'POST' });
+      toastMsg(wasBookmarked ? 'Removed bookmark' : 'Bookmarked');
+      updateBookmarkIcon();
+      refreshHomeBookmarks();
+    } catch (e) {
+      toastMsg('Could not update bookmark');
+    }
+  });
+
+  /* ================= View switching ================= */
+  function showView(name) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const target = $('view-' + name);
+    if (target) target.classList.add('active');
+    document.querySelectorAll('.side-item[data-view]').forEach(i =>
+      i.classList.toggle('active', i.dataset.view === name));
+    $('footerHomeContent').style.display = name === 'home' ? '' : 'none';
+    mainCol.classList.toggle('is-home', name === 'home');
+    chrome.style.display = (name === 'home' || name === 'results') ? '' : 'none';
+    if (name === 'bookmarks') renderBookmarks();
+    if (name === 'history')   renderHistory();
+    if (name === 'downloads') renderDownloads();
+    if (name === 'passwords') renderPasswords();
+  }
+
+  document.querySelectorAll('[data-view]').forEach(el =>
+    el.addEventListener('click', () => showView(el.dataset.view)));
+
+  /* ================= Sidebar toggle ================= */
+  function toggleSidebar() {
+    const collapsed = sidebar.classList.toggle('collapsed');
+    mainCol.classList.toggle('sidebar-collapsed', collapsed);
+    sidebarToggle.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    sidebarToggle.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    sidebarToggle.querySelector('svg path').setAttribute('d', collapsed ? 'M9 18l6-6-6-6' : 'M15 18l-6-6 6-6');
+    try { localStorage.setItem('bfsb-sidebar-collapsed', collapsed ? '1' : '0'); } catch(e) {}
+  }
+  sidebarToggle.addEventListener('click', toggleSidebar);
+  try {
+    if (localStorage.getItem('bfsb-sidebar-collapsed') === '1') {
+      sidebar.classList.add('collapsed');
+      mainCol.classList.add('sidebar-collapsed');
+      sidebarToggle.title = 'Expand sidebar';
+      sidebarToggle.setAttribute('aria-label', 'Expand sidebar');
+      sidebarToggle.querySelector('svg path').setAttribute('d', 'M9 18l6-6-6-6');
+    }
+  } catch(e) {}
+
+  /* ================= Results page ================= */
+  $('clearSearch').addEventListener('click', () => {
+    input.value = '';
+    showProgress();
+    window.location.href = '/';
+  });
+  // Result links: honor the "Open results in a new tab" setting.
+  // Everything else (middle-click, ctrl-click) keeps browser defaults.
+  document.querySelectorAll('#resultsList, #aboutCard').forEach(zone => {
+    zone.addEventListener('click', e => {
+      const a = e.target.closest('a.result-title, .infobox-links a, .about-link');
+      if (!a || !a.href || a.href.startsWith('bfsb://')) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (!settings.openInNewTab) return; // plain navigation in this view
+      e.preventDefault();
+      showProgress();
+      bfsbAction('bfsb://newTab?url=' + encodeURIComponent(a.href));
+    });
+  });
+  // Animate the loading bar once on the results page.
+  if (window.__BFSB_PAGE__.pageType === 'results') {
+    showProgress();
+    setTimeout(hideProgress, 1300);
+  }
+
+  /* ================= Bookmarks view ================= */
+  function bookmarkDomain(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return url; }
+  }
+  function renderBookmarksList(list) {
+    window.__BFSB_PAGE__.savedBookmarks = list || [];
+    const box = $('bookmarksList');
+    if (!list || !list.length) {
+      box.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg><br>No bookmarks yet — search something and press the bookmark icon.</div>';
+      return;
+    }
+    box.innerHTML = list.map((b, i) => `
+      <div class="list-item">
+        <span class="favicon">${escHtml(b.fav || (b.name || '?')[0].toUpperCase())}</span>
+        <div class="li-body">
+          <div class="li-title">${escHtml(b.name || b.url)}</div>
+          <div class="li-sub">${escHtml(bookmarkDomain(b.url))}</div>
+        </div>
+        <span class="li-action" data-open="${escHtml(b.url)}">Open</span>
+        <span class="li-action remove-btn" data-remove="${escHtml(b.url)}">Remove</span>
+      </div>`).join('');
+    box.querySelectorAll('[data-open]').forEach(a =>
+      a.addEventListener('click', () => { window.location.href = a.dataset.open; }));
+    box.querySelectorAll('[data-remove]').forEach(a =>
+      a.addEventListener('click', async () => {
+        const url = a.dataset.remove;
+        await fetch('/api/bookmark/remove?url=' + encodeURIComponent(url), { method: 'POST' });
+        renderBookmarksList((window.__BFSB_PAGE__.savedBookmarks || []).filter(b => b.url !== url));
+        refreshHomeBookmarks();
+        updateBookmarkIcon();
+        toastMsg('Bookmark removed');
+      }));
+  }
+  function renderBookmarks() {
+    fetch('/api/bookmarks').then(r => r.json()).then(renderBookmarksList)
+      .catch(() => renderBookmarksList(window.__BFSB_PAGE__.savedBookmarks || []));
+  }
+
+  /* ================= Home bookmark cards ================= */
+  function renderHomeBookmarksGrid(list) {
+    const grid = $('homeBookmarksGrid');
+    if (!grid) return;
+    if (!settings.showBookmarks || !list || !list.length) {
+      $('homeBookmarks').style.display = 'none';
+      return;
+    }
+    $('homeBookmarks').style.display = '';
+    grid.innerHTML = list.slice(0, 8).map(b => `
+      <a class="bookmark" href="${escHtml(b.url)}"><span class="favicon">${escHtml(b.fav || (b.name || '?')[0].toUpperCase())}</span>${escHtml(b.name || b.url)}</a>`).join('');
+  }
+  function refreshHomeBookmarks() {
+    fetch('/api/bookmarks').then(r => r.json())
+      .then(list => renderHomeBookmarksGrid(list))
+      .catch(() => {});
+  }
+  function applyHomeBookmarksVisibility() {
+    refreshHomeBookmarks();
+  }
+
+  /* ================= History view ================= */
+  function timeAgo(t) {
+    let ms = 0;
+    if (typeof t === 'number') ms = t < 1e12 ? t * 1000 : t;
+    else ms = new Date(t).getTime() || 0;
+    const s = Math.floor((Date.now() - ms) / 1000);
+    if (s < 60) return 'Just now';
+    if (s < 3600) return Math.floor(s/60) + ' min ago';
+    if (s < 86400) return Math.floor(s/3600) + ' h ago';
+    return new Date(ms).toLocaleDateString();
+  }
+  function renderHistoryList(items) {
+    const box = $('historyList');
+    if (!items || !items.length) {
+      box.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg><br>No history yet — search or visit a site to get started.</div>';
+      return;
+    }
+    box.innerHTML = items.map(h => `
+      <div class="list-item">
+        <span class="favicon">${escHtml((h.title || h.url || '?').trim()[0].toUpperCase())}</span>
+        <div class="li-body">
+          <div class="li-title">${escHtml(h.title || h.url)}</div>
+          <div class="li-sub">${escHtml(h.url)}</div>
+        </div>
+        <span class="li-time">${escHtml(timeAgo(h.time))}</span>
+        <span class="li-action remove-btn" data-id="${escHtml(String(h.id))}">Remove</span>
+      </div>`).join('');
+    box.querySelectorAll('[data-id]').forEach(a =>
+      a.addEventListener('click', async () => {
+        await fetch('/api/history/remove?id=' + encodeURIComponent(a.dataset.id), { method: 'POST' });
+        renderHistory();
+      }));
+  }
+  function renderHistory() {
+    fetch('/api/history').then(r => r.json()).then(renderHistoryList).catch(() => renderHistoryList([]));
+  }
+
+  /* ================= Downloads view ================= */
+  function renderDownloads() {
+    $('downloadsList').innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg><br>Files you download will show up here.</div>';
+  }
+
+  /* ================= Passwords view ================= */
+  function renderPasswords() {
+    $('passwordsList').innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><br>No passwords saved yet.</div>';
+  }
+
+  /* ================= Privacy toggles ================= */
+  document.querySelectorAll('.switch[data-setting]').forEach(sw => {
+    const key = sw.dataset.setting;
+    sw.classList.toggle('on', !!settings[key]);
+    sw.addEventListener('click', async () => {
+      settings[key] = !settings[key];
+      sw.classList.toggle('on', settings[key]);
+      saveSettings();
+      if (key === 'showBookmarks') applyHomeBookmarksVisibility();
+      if (key === 'blockTrackers') {
+        // Real adblocker state, shared with the proxy/mitmdump layer.
+        try {
+          await fetch('/api/adblock?enabled=' + (settings[key] ? '1' : '0'), { method: 'POST' });
+          toastMsg(settings[key] ? 'Adblocker enabled' : 'Adblocker disabled');
+        } catch (e) {
+          toastMsg('Setting updated');
+        }
+      } else {
+        toastMsg('Setting updated');
+      }
+    });
+  });
+  // Sync the Adblocker switch with the real backend state.
+  fetch('/api/adblock').then(r => r.json()).then(st => {
+    if (st && typeof st.enabled === 'boolean') {
+      settings.blockTrackers = st.enabled;
+      saveSettings();
+      const sw = document.querySelector('.switch[data-setting="blockTrackers"]');
+      if (sw) sw.classList.toggle('on', st.enabled);
+    }
+  }).catch(() => {});
+
+  /* ================= Settings ================= */
+  $('engineSelect').value = settings.engine;
+  $('engineSelect').addEventListener('change', e => { settings.engine = e.target.value; saveSettings(); toastMsg('Search engine updated'); });
+
+  $('clearHistoryBtn').addEventListener('click', async () => {
+    await fetch('/api/history/clear', { method: 'POST' });
+    toastMsg('History cleared');
+    renderHistory();
+  });
+
+  /* ================= Dots canvas (home only, hover trail) ================= */
+  (function () {
+    const canvas = $('dotsCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const SPACING = 34;
+    const BASE_R = 1.6;
+    const GLOW_DIST = 80;
+    let dots = [];
+    let mouse = { x: -9999, y: -9999 };
+    let moved = false;
+    let suppressGlow = false;
+    let w = 0, h = 0;
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      w = mainCol.clientWidth;
+      h = mainCol.clientHeight;
+      canvas.width = Math.max(1, Math.floor(w * dpr));
+      canvas.height = Math.max(1, Math.floor(h * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      build();
+    }
+
+    function build() {
+      dots = [];
+      const offX = SPACING / 2, offY = SPACING / 2;
+      for (let y = offY; y < h; y += SPACING) {
+        for (let x = offX; x < w; x += SPACING) {
+          dots.push({ x, y, glow: 0, s: 0.75 + Math.random() * 0.5, a: 0.07 + Math.random() * 0.08 });
+        }
+      }
+    }
+
+    mainCol.addEventListener('mousemove', e => {
+      if (e.target.closest && e.target.closest('.address-bar, .bookmark, .tab, .new-tab-btn, .refresh-btn')) {
+        suppressGlow = true;
+        mouse.x = -9999; mouse.y = -9999;
+        return;
+      }
+      suppressGlow = false;
+      const r = mainCol.getBoundingClientRect();
+      mouse.x = e.clientX - r.left;
+      mouse.y = e.clientY - r.top;
+      moved = true;
+    });
+    mainCol.addEventListener('mouseleave', () => {
+      mouse.x = -9999; mouse.y = -9999;
+    });
+    window.addEventListener('resize', resize);
+
+    function exclZones() {
+      const zones = [];
+      const mr = mainCol.getBoundingClientRect();
+      document.querySelectorAll('#chrome .tab, #chrome .new-tab-btn, #chrome .address-bar, #chrome .refresh-btn, #homeBookmarks .bookmarks').forEach(el => {
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return;
+        const pad = 2;
+        const extraBottom = el.closest('#homeBookmarks') ? 24 : 0;
+        zones.push({
+          x0: r.left - mr.left - pad, y0: r.top - mr.top - pad,
+          x1: r.right - mr.left + pad, y1: r.bottom - mr.top + pad + extraBottom
+        });
+      });
+      return zones;
+    }
+
+    function frame() {
+      requestAnimationFrame(frame);
+      if (!mainCol.classList.contains('is-home')) {
+        ctx.clearRect(0, 0, w, h);
+        return;
+      }
+      if (!dots.length) return;
+      ctx.clearRect(0, 0, w, h);
+      const zones = exclZones();
+      const active = !suppressGlow && moved;
+      moved = false;
+
+      for (const d of dots) {
+        let hidden = false;
+        for (const z of zones) {
+          if (d.x >= z.x0 && d.x <= z.x1 && d.y >= z.y0 && d.y <= z.y1) { hidden = true; break; }
+        }
+        if (hidden) { d.glow = 0; continue; }
+        if (active) {
+          const dx = d.x - mouse.x, dy = d.y - mouse.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < GLOW_DIST) {
+            let f = 1 - dist / GLOW_DIST;
+            f = f * f * (3 - 2 * f);
+            d.glow = Math.min(1, d.glow + f * 0.35);
+          }
+          else d.glow *= 0.92;
+        } else {
+          d.glow *= 0.92;
+        }
+        if (d.glow < 0.01) d.glow = 0;
+        const g = d.glow;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, (BASE_R + g * 1.2) * d.s, 0, Math.PI * 2);
+        if (g > 0.02) {
+          ctx.fillStyle = `rgba(123, 92, 255, ${0.25 + g * 0.65})`;
+          ctx.shadowColor = 'rgba(123, 92, 255, 0.9)';
+          ctx.shadowBlur = 12 * g;
+        } else {
+          ctx.fillStyle = `rgba(154, 160, 200, ${d.a})`;
+          ctx.shadowBlur = 0;
+        }
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    resize();
+    if (window.ResizeObserver) new ResizeObserver(resize).observe(mainCol);
+    frame();
+  })();
+
+  /* ================= Init ================= */
+  (function init() {
+    // Show the in-page chrome (tabs + address bar) only on home & results.
+    const pt = window.__BFSB_PAGE__.pageType;
+    chrome.style.display = (pt === 'home' || pt === 'results' || pt === 'about') ? '' : 'none';
+    mainCol.classList.toggle('is-home', pt === 'home' || pt === 'about');
+    // A #panel hash (from the native menu) opens that view directly.
+    const hashView = (location.hash || '').replace('#', '');
+    const known = ['home', 'results', 'bookmarks', 'history', 'downloads', 'privacy', 'passwords', 'settings'];
+    if (hashView && known.includes(hashView)) {
+      showView(hashView);
+    } else if (pt === 'results') {
+      showView('results');
+    } else if (pt === 'preferences') {
+      showView('settings');
+    } else {
+      showView('home');
+    }
+    // Home bookmarks: prefer the server-rendered grid, but refresh live.
+    refreshHomeBookmarks();
+    updateBookmarkIcon();
+    hideProgress();
+  })();
 </script>
 </body>
 </html>
