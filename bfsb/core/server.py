@@ -491,13 +491,16 @@ class BFSHBServer:
         _t_submit = _ptime.perf_counter()
 
         # Log the search itself so History reflects what was asked,
-        # not just the pages later visited. Best-effort.
+        # not just the pages later visited. Best-effort, OFF the event
+        # loop: the sync SQLite write measured 26-63ms of loop stall per
+        # query (PERF_NOTES.md A), delaying every concurrent request.
         try:
             from urllib.parse import quote as _quote
 
             from bfsb.core.storage.history import HistoryStore
 
-            HistoryStore().record(
+            await asyncio.to_thread(
+                HistoryStore().record,
                 f"http://127.0.0.1:8889/search?q={_quote(query)}",
                 query,
             )
