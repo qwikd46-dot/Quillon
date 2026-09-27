@@ -58,15 +58,19 @@ class BFSBProxyManager:
 
         logger.info(f"[BFSB Proxy] Certificate directory: {self._cert_dir}")
 
-        # Build mitmproxy command
+        from .proxy_bootstrap import ALLOW_HOSTS_REGEX, _mitmdump_command
+
+        mitmdump = _mitmdump_command()
+        if mitmdump is None:
+            raise RuntimeError("mitmdump is unavailable")
         cmd = [
-            "mitmdump",  # headless version, no TTY required
+            *mitmdump,
             "--mode", "regular",
             "--listen-host", self._host,
             "--listen-port", str(self._port),
             "--set", f"confdir={self._cert_dir}",
-            "--set", "ssl_insecure=true",
             "--set", "block_global=false",
+            "--allow-hosts", ALLOW_HOSTS_REGEX,
             "-s", self._addon_path,
             "--quiet",
         ]
@@ -122,6 +126,8 @@ class BFSBProxyManager:
         """Wait for proxy to accept connections."""
         start = time.time()
         while time.time() - start < timeout:
+            if self._process is not None and self._process.poll() is not None:
+                raise RuntimeError("Proxy process exited before becoming ready")
             try:
                 reader, writer = await asyncio.open_connection(
                     self._host, self._port
@@ -169,6 +175,7 @@ class BFSBProxyManager:
                     self._process.terminate()
 
                 # Wait for termination
+                loop = asyncio.get_running_loop()
                 try:
                     await asyncio.wait_for(
                         loop.run_in_executor(None, self._process.wait),

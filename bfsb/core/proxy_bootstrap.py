@@ -9,34 +9,98 @@ by page-side anti-adblock checks (no JS hooks involved).
 Fail-safe: if the proxy cannot start, ensure_proxy_running() returns None
 and the browser runs WITHOUT proxy flags - degraded ad blocking, zero breakage.
 
-Interception is scoped to YouTube-family hosts only (--allow-hosts), so all
-other traffic tunnels through untouched.
+Interception is scoped to the reviewed YouTube and Google Video hosts only
+(--allow-hosts), so all other traffic tunnels through untouched.
 """
 
 from __future__ import annotations
 
 import atexit
 import base64
+import os
 import shutil
+import signal
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 PROXY_HOST = "127.0.0.1"
 PROXY_PORT = 8228
+PROXY_PID_FILE = Path.home() / ".bfsb" / "proxy.pid"
 
-# Only YouTube-family hosts are intercepted - everything else is untouched.
-# CRITICAL: mitmproxy matches these patterns against "host:port" strings
-# (e.g. "www.youtube.com:443" - see mitmproxy/addons/next_layer.py), so the
-# regex MUST accept an optional trailing ":port". A "$"-anchored regex like
-# r"youtube\.com$" never matches and mitmproxy tunnels EVERYTHING untouched
-# (the addon would never see a single request).
+ALLOW_HOSTS = (
+    "youtube.com",
+    "www.youtube.com",
+    "*.googlevideo.com",
+)
+ALLOW_HOST_PATTERNS = (
+    r"youtube\.com",
+    r"www\.youtube\.com",
+    r"(?:[a-z0-9-]+\.)*googlevideo\.com",
+)
 ALLOW_HOSTS_REGEX = (
-    r"(^|\.)(youtube\.com|youtube-nocookie\.com|googlevideo\.com|ytimg\.com)(:|$)"
+    r"^(?:" + "|".join(ALLOW_HOST_PATTERNS) + r")(?::[0-9]+)?$"
 )
 
 _process: subprocess.Popen | None = None
+
+
+def _mitmdump_command() -> list[str] | None:
+    candidates = [shutil.which("mitmdump"), str(Path.home() / ".local" / "bin" / "mitmdump")]
+    for candidate in candidates:
+        if not candidate or not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+            continue
+        try:
+            result = subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                return [candidate]
+        except Exception:
+            continue
+    try:
+        import importlib.util
+        if importlib.util.find_spec("mitmproxy") is None:
+            return None
+    except Exception:
+        return None
+    code = "from mitmproxy.tools.main import mitmdump; mitmdump()"
+    probe = "import mitmproxy"
+    commands = []
+    prefixes = []
+    for prefix in (getattr(sys, "base_prefix", ""), sys.prefix, getattr(sys, "exec_prefix", "")):
+        if prefix and prefix not in prefixes:
+            prefixes.append(prefix)
+    for prefix in prefixes:
+        base = Path(prefix)
+        library_dirs = []
+        for name in ("lib", "lib64"):
+            directory = base / name
+            if directory.is_dir() and str(directory) not in library_dirs:
+                library_dirs.append(str(directory))
+        for directory in library_dirs:
+            for loader in sorted(Path(directory).glob("ld-linux*.so*")):
+                if not loader.is_file() or not os.access(loader, os.X_OK):
+                    continue
+                search_path = library_dirs[:]
+                inherited = os.environ.get("LD_LIBRARY_PATH", "")
+                if inherited:
+                    search_path.extend(part for part in inherited.split(os.pathsep) if part and part not in search_path)
+                prefix_command = [
+                    str(loader), "--library-path", os.pathsep.join(search_path),
+                    sys.executable,
+                ]
+                commands.append(([*prefix_command, "-c", probe], [*prefix_command, "-c", code]))
+    commands.insert(0, ([sys.executable, "-c", probe], [sys.executable, "-c", code]))
+    for probe_command, command in commands:
+        try:
+            result = subprocess.run(probe_command, capture_output=True, timeout=5)
+            if result.returncode == 0:
+                return command
+        except Exception:
+            continue
+    return None
 
 
 def _port_open(host: str, port: int) -> bool:
@@ -47,18 +111,29 @@ def _port_open(host: str, port: int) -> bool:
         return False
 
 
+def _is_bfsb_mitmprocess(raw_cmdline: str, port: int) -> bool:
+    tokens = [token for token in raw_cmdline.split("\x00") if token]
+    has_port = f"--listen-port={port}" in tokens
+    if "--listen-port" in tokens:
+        index = tokens.index("--listen-port")
+        has_port = has_port or (
+            index + 1 < len(tokens) and tokens[index + 1] == str(port)
+        )
+    cmdline = " ".join(tokens)
+    return "mitmdump" in cmdline and "proxy_addon.py" in cmdline and has_port
+
+
 def _mitmdump_pids_on_port(port: int) -> list[int]:
-    """Find existing mitmdump process PIDs listening on the port (stale runs)."""
     pids = []
     try:
         for proc in Path("/proc").iterdir():
             if not proc.name.isdigit():
                 continue
             try:
-                cmdline = (proc / "cmdline").read_bytes().decode(
+                raw_cmdline = (proc / "cmdline").read_bytes().decode(
                     "utf-8", errors="ignore"
                 )
-                if "mitmdump" in cmdline and str(port) in cmdline:
+                if _is_bfsb_mitmprocess(raw_cmdline, port):
                     pids.append(int(proc.name))
             except Exception:
                 continue
@@ -96,14 +171,82 @@ def _compute_spki_hash(ca_path: Path) -> str | None:
         return None
 
 
-def _cleanup() -> None:
-    global _process
-    if _process is not None:
+def _terminate_process(pid: int, sig: signal.Signals) -> None:
+    try:
+        os.killpg(os.getpgid(pid), sig)
+    except Exception:
         try:
-            _process.terminate()
+            os.kill(pid, sig)
         except Exception:
             pass
+
+
+def _recorded_proxy_pid() -> Optional[int]:
+    try:
+        pid = int(PROXY_PID_FILE.read_text().strip())
+        if pid <= 1:
+            return None
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="ignore")
+        if "proxy_addon.py" not in cmdline or str(PROXY_PORT) not in cmdline:
+            return None
+        return pid
+    except Exception:
+        return None
+
+
+def _cleanup_recorded_proxy() -> None:
+    pid = _recorded_proxy_pid()
+    if pid is not None:
+        _terminate_process(pid, signal.SIGTERM)
+    try:
+        PROXY_PID_FILE.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+
+def _is_bfsb_mitmprocess_for_port() -> bool:
+    """True when a live BFSB mitmdump is currently serving our port.
+
+    Adopting someone else's healthy proxy is what ensure_proxy_running
+    already does, so shutdown must not kill it either.
+    """
+    for pid in _mitmdump_pids_on_port(PROXY_PORT):
+        try:
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes().decode(
+                "utf-8", errors="ignore"
+            )
+        except OSError:
+            continue
+        if _is_bfsb_mitmprocess(raw, PROXY_PORT):
+            return True
+    return False
+
+
+def _cleanup() -> None:
+    global _process
+    process = _process
+    if process is not None:
+        _terminate_process(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=2)
+        except Exception:
+            _terminate_process(process.pid, signal.SIGKILL)
         _process = None
+        _cleanup_recorded_proxy()
+        return
+    # No proxy of ours to stop. The pid file is keyed to the PORT, not to
+    # the owning process, so another live BFSB instance's proxy is in it.
+    # Killing that would break a second running browser, so only reclaim
+    # the port when nothing of ours exists AND the port is not serving a
+    # healthy proxy we can adopt.
+    if not _is_bfsb_mitmprocess_for_port():
+        _cleanup_recorded_proxy()
+
+
+def shutdown_proxy() -> None:
+    _cleanup()
 
 
 def ensure_proxy_running(timeout: float = 20.0) -> tuple[int, str] | None:
@@ -115,30 +258,23 @@ def ensure_proxy_running(timeout: float = 20.0) -> tuple[int, str] | None:
     """
     global _process
 
-    # Reuse an already-running BFSB mitmdump (desktop entry relaunches)
+    if _process is None:
+        _cleanup_recorded_proxy()
+
     if _port_open(PROXY_HOST, PROXY_PORT):
         stale = _mitmdump_pids_on_port(PROXY_PORT)
-        ca = Path.home() / ".bfsb" / "mitmproxy" / "mitmproxy-ca-cert.pem"
-        spki = _compute_spki_hash(ca) if ca.exists() else None
-        if stale or spki:
-            # Existing proxy - kill stale and restart fresh so the addon
-            # (with the response() rewriting hook) is guaranteed current.
-            for pid in stale:
-                try:
-                    subprocess.run(["kill", str(pid)], capture_output=True, timeout=5)
-                except Exception:
-                    pass
-            # Wait for the port to actually CLOSE before starting the new
-            # instance - otherwise the new mitmdump fails to bind (port still
-            # held by the dying process), the ready-check below sees the OLD
-            # socket and reports success, and the browser routes into a dead
-            # port -> "no internet" on every page.
-            for _ in range(20):
-                if not _port_open(PROXY_HOST, PROXY_PORT):
-                    break
-                time.sleep(0.25)
-        else:
-            # Port taken by something else - fail safe
+        if not stale:
+            return None
+        for pid in stale:
+            try:
+                subprocess.run(["kill", str(pid)], capture_output=True, timeout=5)
+            except Exception:
+                pass
+        for _ in range(20):
+            if not _port_open(PROXY_HOST, PROXY_PORT):
+                break
+            time.sleep(0.25)
+        if _port_open(PROXY_HOST, PROXY_PORT):
             return None
 
     # Prepare cert directory; pre-copy the standard CA so mitmdump reuses it
@@ -155,43 +291,63 @@ def ensure_proxy_running(timeout: float = 20.0) -> tuple[int, str] | None:
             pass
 
     addon_path = Path(__file__).resolve().parent / "proxy_addon.py"
+    mitmdump = _mitmdump_command()
+    if mitmdump is None:
+        return None
 
     cmd = [
-        "mitmdump",
+        *mitmdump,
         "--mode", "regular",
         "--listen-host", PROXY_HOST,
         "--listen-port", str(PROXY_PORT),
         "--set", f"confdir={confdir}",
-        "--set", "ssl_insecure=true",
         "--set", "block_global=false",
-        "--set", "stream_large_bodies=3m",
         "--allow-hosts", ALLOW_HOSTS_REGEX,
         "-s", str(addon_path),
         "--quiet",
     ]
 
     try:
+        # The proxy used to be started with both streams sent to
+        # /dev/null, so when it failed to start the only symptom was a
+        # browser error page (ERR_PROXY_CONNECTION_FAILED) and a zombie
+        # process, with nothing anywhere saying why. Capture stderr to a
+        # log the user and we can both read.
+        _proxy_log = PROXY_PID_FILE.parent / "proxy-startup.log"
+        try:
+            _proxy_log.parent.mkdir(parents=True, exist_ok=True)
+            _stderr_handle = open(_proxy_log, "ab")
+        except OSError:
+            _stderr_handle = subprocess.DEVNULL
         _process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=_stderr_handle,
             start_new_session=True,
         )
-        atexit.register(_cleanup)
     except Exception:
         _process = None
         return None
+    try:
+        PROXY_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PROXY_PID_FILE.write_text(str(_process.pid), encoding="ascii")
+    except Exception:
+        pass
+    atexit.register(_cleanup)
 
     # Wait for the port and the CA to be ready
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if _process.poll() is not None:
+            return None
         if _port_open(PROXY_HOST, PROXY_PORT) and conf_ca.exists():
             break
-        if _process.poll() is not None:
-            # mitmdump died
-            return None
         time.sleep(0.3)
     else:
+        _cleanup()
+        return None
+
+    if _process.poll() is not None:
         _cleanup()
         return None
 
