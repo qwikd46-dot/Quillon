@@ -7,14 +7,19 @@
 
 ## 1. TLS-interception scope (explicit)
 
-| Host(s) | TLS decrypted? | Why |
-|---|---|---|
-| `youtube.com`, `www.youtube.com` | ✅ Yes | Response rewriting (ad-key stripping, youtubei JSON) |
-| `*.googlevideo.com` | ✅ Yes | Ad-segment blocking (fake 200 empty mp4) |
-| Everything else | ❌ **Never** | SNI/DNS-level endpoint blocking only; bytes pass through untouched |
+The reviewed Phase 5 scope is:
 
-**Decision (user-approved 2026-09-24):** hybrid, made explicit — TLS-decrypt ONLY the
-above hosts. All other traffic is never decrypted.
+| Host scope | TLS decrypted? | Reason |
+|---|---|---|
+| `youtube.com` | Yes | YouTube response rewriting |
+| `www.youtube.com` | Yes | YouTube response rewriting |
+| `*.googlevideo.com` | Yes | Ad-segment classification and response faking |
+| Everything else | No | CONNECT/SNI/DNS handling; no mitmproxy response addon |
+
+The generated `--allow-hosts` expression is built from
+`bfsb/core/proxy_bootstrap.py:ALLOW_HOSTS` and is port-anchored. It rejects
+suffix-confusion hosts and unreviewed YouTube-family domains. The final list
+must be shown for review before this scope is treated as final.
 
 ## 2. What the proxy can see on decrypted hosts
 
@@ -27,44 +32,61 @@ above hosts. All other traffic is never decrypted.
 
 | Data | Logged? | Stored where? | Retention |
 |---|---|---|---|
-| Rules-hit metadata (URL, rule matched, action taken) | Yes (stdout) | Console / log file only | Session lifetime |
-| Request/response bodies | **No** | Never written | N/A |
-| Cookies / session tokens | **No** | Never logged or stored | N/A |
-| Decrypted content | **No** | Processed in-memory only, discarded | N/A |
+| Rules-hit metadata | Yes | `~/.local/share/bfsb/proxy_events.log`; mitmproxy stdout is normally suppressed | No rotation is configured |
+| Request/response bodies | No | Never written by the proxy addon | N/A |
+| Decrypted content | No | Processed in memory only | N/A |
+| Cookies/session tokens | Not by the proxy addon | Browser profile/cookie vault and normal browser history may retain them | Browser-profile policy |
 
-**Ground rule:** no logging of decrypted payload bodies — rules-hit metadata only.
+**Ground rule:** decrypted payload bodies are never logged. Proxy URLs are
+redacted to scheme/host/path before rule logging; the browser and history
+subsystems may still retain ordinary visited URLs and profile data.
 
 ## 4. CA certificate & private key
 
 | Item | Location | Permissions | In git repo? |
-|---|---|---|---|
-| CA certificate (PEM) | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.pem` | 644 (owner rw) | ❌ No |
-| CA certificate (CER) | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.cer` | 644 | ❌ No |
-| CA certificate + key (P12) | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.p12` | 644 ⚠️ | ❌ No |
-| CA private key | Inside the `.p12` (PKCS#12 bundle) | ⚠️ see below | ❌ **Never committed** (verified: `git log --all --diff-filter=A` clean) |
+|---|---|---:|---|
+| CA certificate (PEM) | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.pem` | 644 | No |
+| CA certificate (CER) | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.cer` | 644 | No |
+| Certificate-only P12 | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.p12` | 600 | No |
+| CA private-key P12 | `~/.bfsb/mitmproxy/mitmproxy-ca.p12` | 600 | No |
+| CA private key (PEM) | `~/.bfsb/mitmproxy/mitmproxy-ca.pem` | 600 | No |
 
-**⚠️ Key exposure risk:** the `.p12` contains the CA private key and is currently
-mode 644 (world-readable). Recommended: `chmod 600 ~/.bfsb/mitmproxy/mitmproxy-ca-cert.p12`.
+The key-bearing files are mode 600. The CA private key is not present in the
+repository or its Git history; no CA regeneration is required.
 
-**CA subject:** `C=US, O=mitmproxy, CN=mitmproxy`
-**Validity:** 2026-09-19 → 2028-09-19
+**CA subject:** `CN=mitmproxy, O=mitmproxy`
+**Validity:** 2026-09-17 → 2036-09-14
 **Pin:** SPKI hash is computed at proxy start and passed to Chromium via
 `--ignore-certificate-errors-spki-list=<hash>`.
 
 ## 5. Mitigations
 
-1. **Restrict decryption to the explicit host list above.** The `--allow-hosts`
-   regex enforces this; anything not matching gets a TCP RST or DNS NXDOMAIN,
-   never a TLS handshake.
-2. **No body logging.** The addon (`proxy_addon.py`) only emits rules-hit metadata.
-3. **CA key permissions.** Should be `chmod 600`.
-4. **Session-scoped.** The proxy process lives and dies with the browser;
-   no persistent daemon.
+1. **Restrict decryption to the reviewed host list.** The port-anchored
+   `--allow-hosts` expression is explicit; nonmatching traffic is not sent through
+   the response-rewriting addon and remains CONNECT/SNI/DNS handled.
+2. **No body logging.** The addon logs only redacted rules-hit metadata.
+3. **Upstream certificate verification.** The proxy bootstrap no longer sets
+   `ssl_insecure=true`.
+4. **CA key permissions.** Key-bearing files are mode 600.
+5. **Session-scoped proxy process.** The mitmdump process lives and dies with
+   the browser; the generated CA and any browser-profile trust entry can
+   persist after shutdown and must be removed separately if persistent trust
+   is not wanted.
+6. **Local-origin API boundary.** CORS and state-changing internal routes
+   accept only the BFSB loopback origins; external origins are rejected.
+7. **Trusted URL validation.** Search results and bookmarks are restricted to
+   credential-free HTTP(S) URLs before rendering or storage.
+8. **Remote debugging gate.** Chromium remote debugging is enabled only with
+   `BFSB_TEST=1`.
 
 ## 6. Residual risks
 
-- The CA is trusted by the system trust store (mitmproxy installs it into NSS).
-  Any process that can read the `.p12` can impersonate TLS for the allowed hosts.
-  Mitigated by filesystem permissions (should be 600).
-- If the user adds more hosts to the TLS-interception allowlist, this document
-  must be updated to reflect the expanded scope.
+- The CA is trusted by the browser profile. Any process that can read the
+  key-bearing files can impersonate TLS for the allowed hosts; mode 600 limits
+  this to the owning account.
+- The final generated host list still requires explicit user review before
+  Phase 5 acceptance.
+- `BFSB_USE_PRIVACY_FRONTENDS=1` opts into legacy Invidious/Piped redirects;
+  those frontend hosts are outside the reviewed TLS-interception scope.
+- If the user changes the TLS-interception allowlist, this document must be
+  updated to reflect the expanded scope.

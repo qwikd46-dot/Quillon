@@ -1,6 +1,6 @@
 # docs/phase-1-design.md — Performance: query intake + tab switching
 
-Status: **awaiting user approval** (no fix code written yet).
+Status: **approved conditionally 2026-09-23; implementation committed; final verification open**.
 Measurements: see `PERF_NOTES.md` (all numbers below reference it).
 
 ## Root causes (measured, ranked by impact)

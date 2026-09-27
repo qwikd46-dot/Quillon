@@ -1,6 +1,7 @@
 # docs/phase-4-design.md — Visual unification (search bar, menu, universal sidebar)
 
-Status: awaiting approval (part of whole-plan approval).
+Status: **implemented 2026-09-24; screenshot/runtime verification pending**.
+The native bar, hamburger, context-menu fallback, and external overlay are wired.
 
 ## Current state (code-verified)
 - **Qt chrome bar** (`browser_chrome.py`, shown only on external sites): `← → ⟳` ghost

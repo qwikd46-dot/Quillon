@@ -1,6 +1,7 @@
 # docs/phase-3-design.md — Tab logic: mystery tab + drag-reorder + close/switch matrix
 
-Status: awaiting approval (part of whole-plan approval).
+Status: **implemented 2026-09-24; final OAuth/browser verification pending**.
+The managed-tab, reorder, close, and middle-click paths are wired.
 
 ## 3a. The "extra mystery tab" on result click
 
@@ -22,9 +23,9 @@ Status: awaiting approval (part of whole-plan approval).
   setting stays available (still honored when enabled).
 - `createWindow()` popup policy: normal popups (OAuth) keep their own window (required
   by Google/TikTok flows — do not touch); plain `target=_blank` link clicks get routed
-  to a real tab instead of a popup window (Qt gives `WebWindowType.Tab` — honor it as
-  a tab via `new_tab()` when the request comes from a user-clicked link with
-  `target=_blank`; keep window behavior for `window.open` script popups).
+  to a real tab instead of a popup window (Qt exposes `WebBrowserTab` and
+  `WebBrowserBackgroundTab`; honor those as managed tabs and keep OAuth/dialog
+  window types as windows).
 - Guarantee: after search → click result → **view_count increases by exactly 1** and
   the results tab is unchanged (covered in tests).
 
@@ -56,7 +57,7 @@ Extend the harness (headless, CDP + `/test-state`):
 Middle-click close is new: `mousedown`/`auxclick` with `button===1` on `.tab` →
 `bfsb://closeTab?index=N`; native side: `NativeTab.mousePressEvent` already emits
 clicked on left — extend for MiddleButton. Cover each cell in
-`scripts/test_tabs_phase3.py` (headless pytest driving CDP + `/test-state`).
+  `scripts/test_tabs_phase3.py` (custom CDP harness driving `/test-state`).
 
 ## Files touched
 - `bfsb/templates/bfsb_combined.html` (DnD, middle-click, default setting)

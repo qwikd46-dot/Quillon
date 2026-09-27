@@ -1,8 +1,7 @@
 # docs/phase-2-design.md — Progress bar (Home + Results), event-driven
 
-Status: awaiting approval (part of whole-plan approval). Depends on Phase 1 step 2
-(SPA search — results rendered in-page), because a progress bar can only show real
-progress inside the page that survives the query.
+Status: **implemented 2026-09-24; final browser verification pending**.
+The JSON/SSE path is in place with request correlation and a persistent-page fallback.
 
 ## Root cause (verified)
 
