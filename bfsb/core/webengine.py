@@ -2,7 +2,9 @@
 # Removed WebChannel - causes Mojo IPC segfaults. Using runJavaScript() instead.
 
 import json
-from urllib.parse import urlparse
+import os
+import re
+from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 from PyQt6.QtCore import QUrl, QObject, pyqtSlot
 from PyQt6.QtNetwork import QSslConfiguration, QSslCertificate
@@ -20,6 +22,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from .config import APP_CONFIG, SECURITY_CONFIG
 from .blocker import URLBlocker
+from .adblock_state import is_adblock_enabled
 from .tampermonkey_scripts import inject_ghostery_scriptlet
 
 # Worker for blocking SQLite writes that must never run on the GUI thread
@@ -102,7 +105,18 @@ def _install_mitmproxy_ca(profile=None) -> None:
         print(f"[BFSB] Failed to install mitmproxy CA: {e}")
 
 
+_nss_setup_started = False
+
+
 def _ensure_mitmproxy_ca_in_nss() -> None:
+    global _nss_setup_started
+    if _nss_setup_started:
+        return
+    _nss_setup_started = True
+    threading.Thread(target=_ensure_mitmproxy_ca_in_nss_sync, daemon=True).start()
+
+
+def _ensure_mitmproxy_ca_in_nss_sync() -> None:
     """Add mitmproxy CA to NSS database for QtWebEngine/Firefox/Chrome trust.
     
     This uses certutil to add the CA to the user's NSS database (~/.pki/nssdb).
@@ -271,7 +285,6 @@ def _register_bfsb_scheme() -> None:
             | QWebEngineUrlScheme.Flag.SecureScheme
             | QWebEngineUrlScheme.Flag.CorsEnabled
             | QWebEngineUrlScheme.Flag.FetchApiAllowed
-            | QWebEngineUrlScheme.Flag.ContentSecurityPolicyIgnored
         )
         QWebEngineUrlScheme.registerScheme(scheme)
         _bfsb_scheme_registered = True
@@ -318,6 +331,34 @@ COSMETIC_CSS_INJECTOR = r"""
     window.__bfsbCosmeticReady = true;
 })();
 """
+
+
+def _privacy_frontends_enabled() -> bool:
+    return os.environ.get("BFSB_USE_PRIVACY_FRONTENDS") == "1"
+
+
+def _guard_virtual(default, what, fallback):
+    """Wrap a reimplemented Qt virtual method so it cannot abort us.
+
+    An exception raised out of a reimplemented virtual (acceptNavigationRequest,
+    interceptRequest, createWindow) calls qFatal in PyQt6 and SIGABRTs the
+    whole browser. A single bad bookmark or a deleted view would take the
+    process down. Fail safe instead: return this method's own neutral value
+    and say so, because the right answer differs per method -- False to
+    refuse a navigation, None for a void method or a failed window.
+    """
+
+    def wrapper(self, *args, **kwargs):
+        try:
+            return default(self, *args, **kwargs)
+        except Exception as error:
+            import traceback
+
+            print(f"[WebEngine] {what} failed: {error}")
+            traceback.format_exc()
+            return fallback
+
+    return wrapper
 
 
 class RequestInterceptor(QWebEngineUrlRequestInterceptor):
@@ -546,15 +587,38 @@ class RequestInterceptor(QWebEngineUrlRequestInterceptor):
         "&utm_id=",
     )
 
-    def interceptRequest(self, info) -> None:  # type: ignore[override]
+    @staticmethod
+    def _is_proxy_owned_ad_url(url: str) -> bool:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if not (host in {"youtube.com", "www.youtube.com"} or host == "googlevideo.com" or host.endswith(".googlevideo.com")):
+            return False
+        path = (parsed.path or "").lower()
+        if any(marker in path for marker in ("/api/stats/", "/pagead/", "/ptracking", "/get_midroll", "/youtubei/v1/log_event")):
+            return True
+        query = (parsed.query or "").lower()
+        return any(key in query for key in ("adformat=", "ctier=", "ad_type=", "afv=1", "ad_device="))
+
+    def _interceptRequest_impl(self, info) -> None:  # type: ignore[override]
         url = info.requestUrl().toString()
         parsed_url = urlparse(url)
         host = (parsed_url.hostname or "").lower()
+        if _privacy_frontends_enabled() and info.resourceType().value == 0 and (
+            host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"
+        ):
+            rewritten = BFSBPage._rewrite_youtube_url(url)
+            if rewritten != url:
+                info.redirect(QUrl(rewritten))
+                return
         # Allow BFSB's local services unconditionally, but do not treat a
         # remote hostname containing "localhost" or a local port as local.
         if host in {"localhost", "127.0.0.1", "::1"} and (
             parsed_url.port in {None, 8888, 8889}
         ):
+            return
+        if self._is_proxy_owned_ad_url(url):
+            return
+        if not is_adblock_enabled():
             return
 
         url_lower = url.lower()
@@ -688,6 +752,17 @@ class RequestInterceptor(QWebEngineUrlRequestInterceptor):
             return
 
 
+def _is_youtube_age_gate_bypass(url: str) -> bool:
+    if os.environ.get("BFSB_YOUTUBE_SAFE_MODE", "1") != "1":
+        return False
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if host not in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}:
+        return False
+    query = parse_qs(parsed.query)
+    return "bpctr" in query or "has_verified" in query
+
+
 class SafePage(QWebEnginePage):
     """WebEngine page with navigation blocking for dangerous content."""
 
@@ -696,16 +771,16 @@ class SafePage(QWebEnginePage):
     def __init__(self, profile: QWebEngineProfile, parent) -> None:
         super().__init__(profile, parent)
 
-    def acceptNavigationRequest(
+    def _acceptNavigationRequest_impl(
         self, url: QUrl, nav_type: int, is_main_frame: bool
     ) -> bool:
         url_str = url.toString()
-        # Rewrite YouTube URLs to privacy-friendly frontends.
-        # SafePage itself has no _rewrite_youtube_url (it lives on BFSBPage);
-        # guard so a bare SafePage never crashes with AttributeError.
-        rewriter = getattr(self, "_rewrite_youtube_url", None)
-        if rewriter is not None:
-            url_str = rewriter(url_str)
+        if _is_youtube_age_gate_bypass(url_str):
+            return False
+        if _privacy_frontends_enabled():
+            rewriter = getattr(self, "_rewrite_youtube_url", None)
+            if rewriter is not None:
+                url_str = rewriter(url_str)
         url = QUrl(url_str)
         path = url.path().lower() if hasattr(url, "path") else url_str.lower()
 
@@ -732,6 +807,8 @@ class SafePage(QWebEnginePage):
 class BFSBPage(SafePage):
     """BFSB custom page that works with local HTTP server backend."""
 
+    _open_popups = []
+
     def __init__(self, profile: QWebEngineProfile, parent) -> None:
         super().__init__(profile, parent)
         self._bfsb_internal_nav = False  # Track bfsb:// navigations to suppress progress bar
@@ -741,7 +818,7 @@ class BFSBPage(SafePage):
         # Listen for URL changes (after navigation) to keep the tracker fresh.
         self.urlChanged.connect(self._track_real_url)
 
-    def createWindow(self, window_type: 'QWebEnginePage.WebWindowType') -> 'QWebEnginePage':
+    def _createWindow_impl(self, window_type: 'QWebEnginePage.WebWindowType') -> 'QWebEnginePage':
         """Route JS popup requests (OAuth flows) to a real new window.
 
         Without this, window.open() returns ``None`` and Google/TikTok/etc.
@@ -752,11 +829,29 @@ class BFSBPage(SafePage):
         the popup having its OWN window — child tabs inside the main
         view's window break the OAuth state machine.
         """
-        from PyQt6.QtWidgets import QMainWindow
+        tab_types = {
+            getattr(QWebEnginePage.WebWindowType, "WebBrowserTab", None),
+            getattr(QWebEnginePage.WebWindowType, "WebBrowserBackgroundTab", None),
+        }
+        main = getattr(self, "_main_window", None)
+        if window_type in tab_types and main is not None and hasattr(main, "new_tab"):
+            view = main.new_tab(
+                "about:blank",
+                private=bool(getattr(self, "_private", False)),
+            )
+            if view is not None:
+                print(f"[BFSBPage] Popup routed to managed tab; views={len(main._views)}")
+                return view.page()
 
-        popup_view = QWebEngineView()
-        popup_page = BFSBPage(self.profile(), popup_view)
-        popup_view.setPage(popup_page)
+        popup_view = create_web_view(
+            self.profile(),
+            BFSBPage.blocker,
+            page_class=BFSBPage,
+            window=main,
+        )
+        popup_page = popup_view.page()
+        if main is not None:
+            popup_page._main_window = main
         # Use a normal top-level OS window so the OAuth flow's
         # window.open/close logic works as Chromium expects.
         try:
@@ -791,7 +886,7 @@ class BFSBPage(SafePage):
         def _restore() -> None:
             try:
                 view = self.view()
-                if view is None or view.isLoading():
+                if view is None or view.page().isLoading():
                     return  # a real navigation is already in flight
                 current = view.url().toString()
                 if current.startswith(("about:blank", "bfsb://")) and self._last_real_url:
@@ -817,74 +912,31 @@ class BFSBPage(SafePage):
         # First run, when we load a normal URL, record it.
         self._last_real_url = url_str
 
-    def acceptNavigationRequest(
+    def _acceptNavigationRequest_impl(
         self, url: QUrl, nav_type: int, is_main_frame: bool
     ) -> bool:
         url_str = url.toString()
-        # Rewrite YouTube URLs to privacy-friendly frontends
-        url_str = self._rewrite_youtube_url(url_str)
+        if _is_youtube_age_gate_bypass(url_str):
+            return False
+        if _privacy_frontends_enabled():
+            url_str = self._rewrite_youtube_url(url_str)
         url = QUrl(url_str)
         path = url.path().lower() if hasattr(url, "path") else url_str.lower()
 
-        # Handle BFSB internal URLs (bfsb:// scheme). Kept for
-        # compatibility with any older links that still use the scheme,
-        # but the home page About button uses a fragment-style trigger
-        # which is detected in main_window._on_url_changed instead.
         if url_str.startswith("bfsb://"):
+            if not is_main_frame:
+                return False
+            current_url = self.url().toString()
+            current = urlparse(current_url)
+            if not (
+                current.hostname in ("127.0.0.1", "localhost")
+                and current.port in (8888, 8889)
+            ):
+                return False
             self._bfsb_internal_nav = True
-            url_lower = url_str.lower()
-            print(f"[BFSBPage] Intercepted (legacy bfsb://): {url_str}")
-            if hasattr(self, '_main_window') and self._main_window:
-                main = self._main_window
-                if url_lower.startswith("bfsb://goback"):
-                    print("[BFSBPage] -> go_back()")
-                    main.go_back()
-                elif url_lower.startswith("bfsb://goforward"):
-                    print("[BFSBPage] -> go_forward()")
-                    main.go_forward()
-                elif url_lower.startswith("bfsb://reload"):
-                    print("[BFSBPage] -> reload()")
-                    main.reload()
-                elif url_lower.startswith("bfsb://navigate"):
-                    from urllib.parse import urlparse, parse_qs
-                    parsed = urlparse(url_str)
-                    query = parse_qs(parsed.query)
-                    if 'url' in query:
-                        print(f"[BFSBPage] -> navigate({query['url'][0]})")
-                        main.navigate(query['url'][0])
-                elif url_lower.startswith("bfsb://switchtab"):
-                    from urllib.parse import urlparse, parse_qs
-                    parsed = urlparse(url_str)
-                    query = parse_qs(parsed.query)
-                    if 'index' in query:
-                        print(f"[BFSBPage] -> switch_tab({query['index'][0]})")
-                        main.switch_tab(int(query['index'][0]))
-                elif url_lower.startswith("bfsb://closetab"):
-                    from urllib.parse import urlparse, parse_qs
-                    parsed = urlparse(url_str)
-                    query = parse_qs(parsed.query)
-                    if 'index' in query:
-                        print(f"[BFSBPage] -> close_tab({query['index'][0]})")
-                        main.close_tab(int(query['index'][0]))
-                elif url_lower.startswith("bfsb://newtab"):
-                    from urllib.parse import urlparse, parse_qs
-                    parsed = urlparse(url_str)
-                    query = parse_qs(parsed.query)
-                    if 'url' in query:
-                        print(f"[BFSBPage] -> new_tab({query['url'][0]})")
-                        main.new_tab(query['url'][0])
-                    else:
-                        print("[BFSBPage] -> new_tab()")
-                        main.new_tab()
-                elif url_lower.startswith("bfsb://about"):
-                    print("[BFSBPage] -> _show_about_dialog()")
-                    main._show_about_dialog()
-                elif url_lower.startswith("bfsb://preferences"):
-                    print("[BFSBPage] -> _show_preferences_dialog()")
-                    main._show_preferences_dialog()
-            # Clear URL to prevent fallback navigation, then restore the
-            # page the user was on: a rejected bfsb:// navigation would
-            # otherwise commit about:blank#blocked and blank the screen.
+            main = getattr(self, "_main_window", None)
+            if main is not None:
+                main._dispatch_bfsb_action(url_str)
             self._schedule_blank_restore()
             return False
 
@@ -925,7 +977,7 @@ class BFSBPage(SafePage):
             if main is None or not hasattr(main, '_show_main_menu'):
                 super().contextMenuEvent(event)
                 return
-            main._show_main_menu()
+            main._show_main_menu(event.globalPos())
             event.accept()
         except Exception:
             # If anything goes wrong, hand the event back to Qt so
@@ -937,6 +989,11 @@ class BFSBPage(SafePage):
     def _rewrite_youtube_url(url: str) -> str:
         """Rewrite YouTube URLs to Piped (privacy-friendly frontend)."""
         import re
+
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if not (host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"):
+            return url
 
         # Use the module-level lists (shared with the load-failure retry
         # logic in create_web_view), filtered to drop anything that's
@@ -1029,32 +1086,126 @@ class BFSBSchemeHandler(QWebEngineUrlSchemeHandler):
 
     _main_window = None  # set by BFSBWindow after profile creation
 
+    @staticmethod
+    def _local_initiator(job: QWebEngineUrlRequestJob) -> bool:
+        try:
+            initiator = job.initiator().toString()
+            if initiator.startswith("bfsb://"):
+                return True
+            parsed = urlparse(initiator)
+            return (
+                parsed.scheme in ("http", "https")
+                and parsed.hostname in ("127.0.0.1", "localhost")
+                and parsed.port in (8888, 8889)
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _https_initiator(job: QWebEngineUrlRequestJob) -> bool:
+        try:
+            parsed = urlparse(job.initiator().toString())
+            return parsed.scheme.lower() == "https" or (
+                parsed.scheme.lower() == "http"
+                and parsed.hostname in {"localhost", "127.0.0.1"}
+            )
+        except Exception:
+            return False
+
+    def _handle_password_request(
+        self,
+        job: QWebEngineUrlRequestJob,
+    ) -> None:
+        if job.requestMethod().upper() != b"POST" or not self._https_initiator(job):
+            self._reply_denied(job)
+            return
+        try:
+            from PyQt6.QtCore import QIODevice
+
+            body = job.requestBody()
+            if body is None:
+                self._reply_denied(job)
+                return
+            if not body.isOpen():
+                body.open(QIODevice.OpenModeFlag.ReadOnly)
+            raw = bytes(body.readAll()).decode("utf-8")
+            payload = json.loads(raw)
+            origin = str(payload.get("origin", ""))
+            if not (
+                origin.startswith("https://")
+                or origin.startswith("http://localhost:")
+                or origin.startswith("http://127.0.0.1:")
+            ):
+                self._reply_denied(job)
+                return
+            if not str(payload.get("username", "")).strip() or not str(
+                payload.get("password", "")
+            ):
+                self._reply_denied(job)
+                return
+            main = BFSBSchemeHandler._main_window
+            if main is None:
+                self._reply_denied(job)
+                return
+            from PyQt6.QtCore import Q_ARG, QMetaObject, Qt
+
+            if not QMetaObject.invokeMethod(
+                main,
+                "_offer_password_from_json",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, raw),
+            ):
+                self._reply_denied(job)
+                return
+            self._reply_ok(job)
+        except Exception:
+            self._reply_denied(job)
+
     def requestStarted(self, job: QWebEngineUrlRequestJob) -> None:
         url = job.requestUrl().toString()
+        if url.lower().startswith("bfsb://savepassword"):
+            self._handle_password_request(job)
+            return
+        if not url.startswith("bfsb://") or not self._local_initiator(job):
+            self._reply_denied(job)
+            return
         try:
             main = BFSBSchemeHandler._main_window
-            if main is not None and url.startswith("bfsb://"):
-                # navigate() dispatches every bfsb:// action form.
-                main.navigate(url)
-        except Exception as e:
-            print(f"[BFSBSchemeHandler] action failed for {url}: {e}")
-        finally:
+            if main is None:
+                self._reply_denied(job)
+                return
+            from PyQt6.QtCore import Q_ARG, QMetaObject, Qt
+            if not QMetaObject.invokeMethod(
+                main,
+                "_dispatch_bfsb_action",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, url),
+            ):
+                raise RuntimeError("BFSB action slot is unavailable")
             self._reply_ok(job)
+        except Exception as e:
+            print(f"[BFSBSchemeHandler] action dispatch failed for {url}: {e}")
+            self._reply_denied(job)
 
     @staticmethod
     def _reply_ok(job: QWebEngineUrlRequestJob) -> None:
         try:
             from PyQt6.QtCore import QBuffer, QIODevice
 
-            buf = QBuffer(job)  # parented to the job → lives until replied
+            buf = QBuffer(job)
             buf.setData(b"ok")
             buf.open(QIODevice.OpenModeFlag.ReadOnly)
             job.reply(b"text/plain", buf)
         except Exception:
-            try:
-                job.fail(QWebEngineUrlRequestJob.ErrorDeny)
-            except Exception:
-                pass
+            BFSBSchemeHandler._reply_denied(job)
+
+    @staticmethod
+    def _reply_denied(job: QWebEngineUrlRequestJob) -> None:
+        try:
+            error = QWebEngineUrlRequestJob.Error.RequestDenied
+            job.fail(error)
+        except Exception:
+            pass
 
 
 _bfsb_scheme_handler: BFSBSchemeHandler | None = None
@@ -1073,8 +1224,69 @@ def set_bfsb_action_target(window) -> None:
     BFSBSchemeHandler._main_window = window
 
 
-def create_web_profile() -> QWebEngineProfile:
-    """Create and configure WebEngine profile."""
+def _block_third_party_cookie(request) -> bool:
+    return not bool(getattr(request, "thirdParty", False))
+
+
+def _accept_cookie_request(request) -> bool:
+    return True
+
+
+PASSWORD_CAPTURE_SCRIPT = r"""
+(function() {
+    if (window.__bfsbPasswordCaptureInstalled) return;
+    window.__bfsbPasswordCaptureInstalled = true;
+    function secureOrigin() {
+        return location.protocol === 'https:' ||
+            (location.protocol === 'http:' &&
+             (location.hostname === 'localhost' || location.hostname === '127.0.0.1'));
+    }
+    document.addEventListener('submit', function(event) {
+        if (!secureOrigin()) return;
+        var form = event.target;
+        if (!form || form.nodeType !== 1) return;
+        var password = form.querySelector('input[type="password"]');
+        if (!password || !password.value) return;
+        if ((password.getAttribute('autocomplete') || '').toLowerCase() === 'new-password') return;
+        var username = form.querySelector(
+            'input[autocomplete="username"], input[type="email"], input[type="text"], input[name*="user" i], input[id*="user" i]'
+        );
+        if (!username || !username.value) return;
+        var payload = JSON.stringify({
+            origin: location.origin,
+            username: username.value,
+            password: password.value,
+            private: __BFSB_PRIVATE__
+        });
+        try {
+            fetch('bfsb://savepassword', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: payload,
+                keepalive: true
+            }).catch(function() {});
+        } catch (e) {}
+    }, true);
+})();
+"""
+
+
+def _install_password_capture(profile: QWebEngineProfile, private: bool = False) -> None:
+    script = QWebEngineScript()
+    script.setName("bfsb_password_capture")
+    script.setSourceCode(
+        PASSWORD_CAPTURE_SCRIPT.replace(
+            "__BFSB_PRIVATE__", "true" if private else "false"
+        )
+    )
+    script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+    script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+    script.setRunsOnSubFrames(False)
+    profile.scripts().insert(script)
+
+
+def create_web_profile(private: bool = False) -> QWebEngineProfile:
+    """Create a persistent shared profile or an off-the-record private profile."""
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtWebEngineCore import QWebEngineProfile
     from .config import SECURITY_CONFIG, APP_CONFIG
@@ -1084,38 +1296,59 @@ def create_web_profile() -> QWebEngineProfile:
     # Ensure mitmproxy CA is in system NSS database for QtWebEngine trust
     _ensure_mitmproxy_ca_in_nss()
 
-    profile = QWebEngineProfile(APP_CONFIG.WINDOW_TITLE, app)
+    profile = QWebEngineProfile() if private else QWebEngineProfile(APP_CONFIG.WINDOW_TITLE, app)
     # bfsb:// action requests (fetch-based GUI actions) dispatch here.
     profile.installUrlSchemeHandler(b"bfsb", get_bfsb_scheme_handler())
-    # Disk HTTP cache: re-downloading every image/script/font on every page
-    # load makes heavy sites (WhatsApp Web, YouTube) crawl. Keep a bounded
-    # on-disk cache instead of NoCache.
-    profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
-    # Force persisting cookies so OAuth flows (Google, TikTok, etc.) keep their
-    # session/ID tokens between the popup window and main frame. Without this,
-    # Google returns "no longer supported in this browser" / sign-in fails.
-    profile.setPersistentCookiesPolicy(
-        QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+    _install_password_capture(profile, private=private)
+    cache_type = (
+        QWebEngineProfile.HttpCacheType.MemoryHttpCache
+        if private
+        else QWebEngineProfile.HttpCacheType.DiskHttpCache
     )
-    # Use a real on-disk data path inside BFSB's project dir so cookies survive
-    # restarts. Default location is %TEMP% which gets purged by some setups.
-    cookie_storage = Path.home() / ".local" / "share" / "bfsb" / "cookie_storage"
-    cookie_storage.mkdir(parents=True, exist_ok=True)
-    if hasattr(QWebEngineProfile, 'setPersistentStoragePath'):
-        profile.setPersistentStoragePath(str(cookie_storage))
-    # Override the default User-Agent. QtWebEngine's default UA is
-    # ``... QtWebEngine/<ver> Chrome/140 ...`` — Google and TikTok now refuse
-    # OAuth logins from this fingerprint (they treat it as a less-secure
-    # / scripted browser). Drop the QtWebEngine tag so auth providers accept
-    # the request as a regular Chrome on Linux.
-    #
-    # The version below is a current Chrome stable build on Linux x86_64.
-    CHROME_UA = (
+    profile.setHttpCacheType(cache_type)
+    # RESTORED after a failed experiment. Qt persists cookies itself; the
+    # encrypted vault is NOT used for cookies. An attempt to mirror them
+    # was reverted because it corrupted every cookie name (QNetworkCookie
+    # accessors return QByteArray, whose str() is the repr), wrote
+    # incognito cookies into the long-lived vault, and never propagated
+    # deletions -- so no session survived a restart while the plaintext
+    # store kept working. See the cookie-vault audit.
+    cookie_policy = (
+        QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies
+        if private
+        else QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+    )
+    profile.setPersistentCookiesPolicy(cookie_policy)
+    if private or os.environ.get("BFSB_BLOCK_THIRD_PARTY_COOKIES") == "1":
+        try:
+            profile.cookieStore().setCookieFilter(_block_third_party_cookie)
+        except Exception:
+            pass
+    if not private:
+        cache_storage = Path.home() / ".local" / "share" / "bfsb" / "webengine-cache"
+        cache_storage.mkdir(parents=True, exist_ok=True)
+        cache_storage.chmod(0o700)
+        if hasattr(profile, "setCachePath"):
+            profile.setCachePath(str(cache_storage))
+        cookie_storage = Path.home() / ".local" / "share" / "bfsb" / "cookie_storage"
+        cookie_storage.mkdir(parents=True, exist_ok=True)
+        cookie_storage.chmod(0o700)
+        if hasattr(profile, "setPersistentStoragePath"):
+            profile.setPersistentStoragePath(str(cookie_storage))
+    default_user_agent = ""
+    if hasattr(profile, "httpUserAgent"):
+        try:
+            default_user_agent = profile.httpUserAgent()
+        except Exception:
+            default_user_agent = ""
+    version_match = re.search(r"Chrome/(\d+)", default_user_agent or "")
+    chrome_major = version_match.group(1) if version_match else "143"
+    chrome_user_agent = (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+        f"(KHTML, like Gecko) Chrome/{chrome_major}.0.0.0 Safari/537.36"
     )
-    if hasattr(profile, 'setHttpUserAgent'):
-        profile.setHttpUserAgent(CHROME_UA)
+    if hasattr(profile, "setHttpUserAgent"):
+        profile.setHttpUserAgent(chrome_user_agent)
 
     # Trust mitmproxy CA for HTTPS interception (auto-load from BFSB data dir)
     _install_mitmproxy_ca(profile)
@@ -1868,6 +2101,11 @@ def create_web_view(profile: QWebEngineProfile, blocker: URLBlocker, page_class=
     # URL request interceptor is set once on the profile in _init_profile
     configure_web_settings(profile.settings())
 
+    # Qt is told never to persist cookies (its store is an unencrypted
+    # SQLite file), so cookies have to be mirrored into the encrypted
+    # vault or the user loses every session. Attaching here is what makes
+    # that true -- without it cookies are stored nowhere at all.
+
     # Set background color to match theme (prevents white flash / black screen)
     page.setBackgroundColor(QColor("#0a0a12"))  # C.BG_0 equivalent
 
@@ -2102,61 +2340,6 @@ def create_web_view(profile: QWebEngineProfile, blocker: URLBlocker, page_class=
 
     view.urlChanged.connect(_on_url_changed)
 
-    # UI sync via runJavaScript (no WebChannel - avoids Mojo IPC segfaults)
-    # Python gets state from QWebEngineView directly and pushes to JS
-    if window is not None:
-        def _sync_ui():
-            try:
-                # Get state from Python (synchronous, no callbacks needed)
-                current_url = view.url().toString()
-
-                # Skip internal bfsb:// URLs and data: URLs (for home page)
-                if current_url.startswith("bfsb://") or current_url.startswith("data:"):
-                    display_url = ""
-                else:
-                    display_url = current_url
-
-                can_go_back = view.history().canGoBack()
-                can_go_forward = view.history().canGoForward()
-                back_disabled = "true" if not can_go_back else "false"
-                forward_disabled = "true" if not can_go_forward else "false"
-
-                # Push state to JS - update nav buttons
-                view.page().runJavaScript(f"""
-                    (function() {{
-                        var backBtn = document.getElementById('btn-back');
-                        var forwardBtn = document.getElementById('btn-forward');
-                        if (backBtn) backBtn.disabled = {back_disabled};
-                        if (forwardBtn) forwardBtn.disabled = {forward_disabled};
-                    }})();
-                """)
-
-                # Push URL to URL bar (only if not focused)
-                # Use json.dumps for safe string interpolation
-                display_url_js = json.dumps(display_url)
-                view.page().runJavaScript(f"""
-                    (function() {{
-                        var urlInput = document.getElementById('urlInput');
-                        if (urlInput && document.activeElement !== urlInput) {{
-                            urlInput.value = {display_url_js};
-                        }}
-                    }})();
-                """)
-            except Exception as e:
-                print(f"[WebEngine] UI sync failed: {e}")
-
-        # Sync UI periodically
-        sync_timer = QTimer()
-        sync_timer.timeout.connect(_sync_ui)
-        sync_timer.start(500)
-
-        # Initial sync after load
-        def _on_load_finished_for_sync(ok: bool):
-            if ok:
-                QTimer.singleShot(100, _sync_ui)
-
-        view.loadFinished.connect(_on_load_finished_for_sync)
-
     # Diagnostic: render process monitoring
     def _on_render_process_terminated(status, exit_code):
         print(f"[WebEngine] Render process terminated: status={status}, exit_code={exit_code}")
@@ -2164,3 +2347,19 @@ def create_web_view(profile: QWebEngineProfile, blocker: URLBlocker, page_class=
     page.renderProcessTerminated.connect(_on_render_process_terminated)
 
     return view
+
+
+# Re-bind the virtuals as guarded wrappers. Done at import time rather than
+# inside the class bodies so the four call sites keep working unchanged.
+RequestInterceptor.interceptRequest = _guard_virtual(
+    RequestInterceptor._interceptRequest_impl, "interceptRequest", None
+)
+SafePage.acceptNavigationRequest = _guard_virtual(
+    SafePage._acceptNavigationRequest_impl, "acceptNavigationRequest", False
+)
+BFSBPage.createWindow = _guard_virtual(
+    BFSBPage._createWindow_impl, "createWindow", None
+)
+BFSBPage.acceptNavigationRequest = _guard_virtual(
+    BFSBPage._acceptNavigationRequest_impl, "acceptNavigationRequest", False
+)
