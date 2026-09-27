@@ -60,8 +60,11 @@ class GhosteryEngineClient:
     _MAX_TAIL_LINES = 200
 
     def __init__(self, repo_dir: Path, script_path: Path, node_binary: str = "node") -> None:
-        self.repo_dir = repo_dir
-        self.script_path = script_path
+        # Both are resolved because the backend is spawned with cwd=repo_dir
+        # and node resolves a relative script against it, which silently
+        # doubles the path into ghostery-adblocker/ghostery-adblocker/.
+        self.repo_dir = Path(repo_dir).resolve()
+        self.script_path = Path(script_path).resolve()
         self.node_binary = node_binary
         self._process: Optional[subprocess.Popen[str]] = None
         self._port: Optional[int] = None
