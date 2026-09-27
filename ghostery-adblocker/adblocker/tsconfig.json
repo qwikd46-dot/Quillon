@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "references": [
+    { "path": "../adblocker-content/tsconfig.json" },
+    { "path": "../adblocker-extended-selectors/tsconfig.json" }
+  ],
+  "include": [
+    "./src/**/*.ts",
+    "./tools/**/*.ts",
+    "./test/**/*.ts",
+    "./assets/update.js",
+  ]
+}

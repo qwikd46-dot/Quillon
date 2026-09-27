@@ -1,0 +1,27 @@
+use_default_settings: true
+
+server:
+  secret_key: "c36cee7de5f75d3ebf7c87dda0d8b1517a1981586316c0ada086de8c5d7bdb6f"
+  bind_address: "0.0.0.0"
+
+search:
+  formats:
+    - html
+    - json
+
+engines:
+  - name: brave
+    engine: brave
+    shortcut: br
+    categories: AI
+  - name: perplexity
+    engine: perplexity
+    shortcut: px
+    categories: AI
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+
+ui:
+  results_on_new_tab: true
+  show_filter_bar: true

@@ -14,9 +14,11 @@ export QT_WEBENGINE_DISABLE_GPU=1
 EXTRA_FLAGS="--no-sandbox"
 export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:-} ${EXTRA_FLAGS}"
 
-export QTWEBENGINEPROCESS_PATH=/usr/lib/qt6/QtWebEngineProcess
-export QTWEBENGINE_RESOURCES_PATH=/usr/share/qt6/resources
-export QT_PLUGIN_PATH=/usr/lib/qt6/plugins
+if [ -d /usr/lib/qt6/plugins ]; then export QT_PLUGIN_PATH=/usr/lib/qt6/plugins; fi
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
-cd /home/binwalk/Downloads/bfsb
-exec /usr/bin/python3 -m bfsb.main "$@"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+if [ -x "$SCRIPT_DIR/bfsb_checkup.sh" ]; then
+    "$SCRIPT_DIR/bfsb_checkup.sh" --replace || true
+fi
+exec python3 -m bfsb.main "$@"

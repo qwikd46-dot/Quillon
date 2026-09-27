@@ -1,0 +1,3187 @@
+/*!
+ * Copyright (c) 2017-present Ghostery GmbH. All rights reserved.
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+import { expect } from 'chai';
+import 'mocha';
+
+import CosmeticFilter, { DEFAULT_HIDING_STYLE } from '../src/filters/cosmetic.js';
+import NetworkFilter from '../src/filters/network.js';
+import { parseFilters } from '../src/lists.js';
+import { hashStrings, tokenize } from '../src/utils.js';
+import { HTMLSelector, HTMLModifier } from '../src/html-filtering.js';
+import { NORMALIZED_TYPE_TOKEN, hashHostnameBackward } from '../src/request.js';
+import FilterEngine from '../src/engine/engine.js';
+
+function h(hostnames: string[]): Uint32Array {
+  return new Uint32Array(hostnames.map(hashHostnameBackward)).sort();
+}
+
+// TODO: collaps, popup, popunder, genericblock
+function network(filter: string, expected: any) {
+  const parsed = NetworkFilter.parse(filter);
+  if (parsed !== null) {
+    expect(parsed.isNetworkFilter()).to.be.true;
+    expect(parsed.isCosmeticFilter()).to.be.false;
+    const verbose = {
+      // Attributes
+      csp: parsed.csp,
+      filter: parsed.getFilter(),
+      regex: parsed.getRegex(),
+      hostname: parsed.getHostname(),
+      denyallow: parsed.denyallow,
+      domains: parsed.domains,
+      redirect: parsed.getRedirect(),
+      removeparam: parsed.removeparam,
+
+      // Filter type
+      isBadFilter: parsed.isBadFilter(),
+      isCSP: parsed.isCSP(),
+      isException: parsed.isException(),
+      isFullRegex: parsed.isFullRegex(),
+      isGenericHide: parsed.isGenericHide(),
+      isSpecificHide: parsed.isSpecificHide(),
+      isElemHide: parsed.isElemHide(),
+      isHostnameAnchor: parsed.isHostnameAnchor(),
+      isLeftAnchor: parsed.isLeftAnchor(),
+      isPlain: parsed.isPlain(),
+      isRedirect: parsed.isRedirect(),
+      isRedirectRule: parsed.isRedirectRule(),
+      isRemoveParam: parsed.isRemoveParam(),
+      isRegex: parsed.isRegex(),
+      isRightAnchor: parsed.isRightAnchor(),
+
+      // Options
+      firstParty: parsed.firstParty(),
+      fromAny: parsed.fromAny(),
+      fromDocument: parsed.fromDocument(),
+      fromFont: parsed.fromFont(),
+      fromImage: parsed.fromImage(),
+      fromMedia: parsed.fromMedia(),
+      fromObject: parsed.fromObject(),
+      fromOther: parsed.fromOther(),
+      fromPing: parsed.fromPing(),
+      fromScript: parsed.fromScript(),
+      fromStylesheet: parsed.fromStylesheet(),
+      fromSubdocument: parsed.fromSubdocument(),
+      fromWebsocket: parsed.fromWebsocket(),
+      fromXmlHttpRequest: parsed.fromXmlHttpRequest(),
+      isImportant: parsed.isImportant(),
+      thirdParty: parsed.thirdParty(),
+      isCaseSensitive: parsed.isCaseSensitive,
+    };
+    expect(verbose).to.deep.include(
+      expected,
+      `filter: ${filter} does not match ${JSON.stringify(expected)}`,
+    );
+  } else {
+    expect(parsed).to.equal(
+      expected,
+      `filter: ${filter} does not match ${JSON.stringify(expected)}`,
+    );
+  }
+}
+
+const DEFAULT_NETWORK_FILTER = {
+  // Attributes
+  csp: undefined,
+  filter: '',
+  hostname: '',
+  redirect: '',
+
+  // Filter type
+  isBadFilter: false,
+  isCSP: false,
+  isException: false,
+  isFullRegex: false,
+  isGenericHide: false,
+  isSpecificHide: false,
+  isElemHide: false,
+  isHostnameAnchor: false,
+  isLeftAnchor: false,
+  isPlain: false,
+  isRedirect: false,
+  isRedirectRule: false,
+  isRemoveParam: false,
+  isRegex: false,
+  isRightAnchor: false,
+
+  // Options
+  firstParty: true,
+  fromAny: true,
+  fromImage: true,
+  fromMedia: true,
+  fromObject: true,
+  fromOther: true,
+  fromPing: true,
+  fromScript: true,
+  fromStylesheet: true,
+  fromSubdocument: true,
+  fromWebsocket: true,
+  fromXmlHttpRequest: true,
+  isImportant: false,
+  thirdParty: true,
+};
+
+describe('Network filters', () => {
+  describe('toString', () => {
+    const checkToString = (
+      line: string,
+      expected: string,
+      debug: boolean = false,
+      modifierReplacer = (modifier: string) => modifier,
+    ) => {
+      const parsed = NetworkFilter.parse(line, debug);
+      expect(parsed).not.to.be.null;
+      if (parsed !== null) {
+        expect(parsed.toString(modifierReplacer)).to.equal(expected);
+      }
+    };
+
+    [
+      // Negations
+      'ads$~image',
+      'ads$~media',
+      'ads$~object',
+      'ads$~other',
+      'ads$~ping',
+      'ads$~script',
+      'ads$~font',
+      'ads$~stylesheet',
+      'ads$~xhr',
+
+      // Options
+      'ads$image',
+      'ads$media',
+      'ads$object',
+      'ads$other',
+      'ads$ping',
+      'ads$script',
+      'ads$font',
+      'ads$3p',
+      'ads$1p',
+      'ads$stylesheet',
+      'ads$xhr',
+
+      'ads$important',
+      'ads$redirect=noop',
+      'ads$redirect-rule=noop',
+    ].forEach((line) => {
+      it(`pprint ${line}`, () => {
+        checkToString(line, line);
+      });
+    });
+
+    it('pprint anchored hostnames', () => {
+      checkToString('||foo.com^', '||foo.com^');
+      checkToString('@@||foo.com', '@@||foo.com^');
+      checkToString('@@||foo.com|', '@@||foo.com^');
+      checkToString('|foo.com|', '|foo.com|');
+      checkToString('foo.com|', 'foo.com|');
+    });
+
+    it('pprint domain', () => {
+      checkToString('ads$domain=foo.com|bar.co.uk|~baz.io', 'ads$domain=<hashed>');
+      checkToString('ads$domain=foo.com|bar.com', 'ads$domain=foo.com|bar.com', true);
+      checkToString(
+        'ads$domain=foo.com,denyallow=foo.com|bar.co.uk|~baz.io',
+        'ads$domain=<hashed>,denyallow=<hashed>',
+      );
+      checkToString(
+        'ads$domain=foo.com,denyallow=foo.com|bar.com',
+        'ads$domain=foo.com,denyallow=foo.com|bar.com',
+        true,
+      );
+    });
+
+    it('pprint with debug=true', () => {
+      checkToString(
+        'ads$domain=foo.com|bar.co.uk|~baz.io',
+        'ads$domain=foo.com|bar.co.uk|~baz.io',
+        true,
+      );
+    });
+
+    it('pprint longer form of modifiers', () => {
+      checkToString('||foo.com^$3p', '||foo.com^$third-party', false, (modifier) => {
+        if (modifier === '3p') {
+          return 'third-party';
+        }
+
+        return modifier;
+      });
+    });
+  });
+
+  it('parses pattern', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isPlain: true,
+    };
+
+    network('ads', {
+      ...base,
+      filter: 'ads',
+    });
+    network('/ads/foo-', {
+      ...base,
+      filter: '/ads/foo-',
+    });
+    network('/ads/foo-$important', {
+      ...base,
+      filter: '/ads/foo-',
+      isImportant: true,
+    });
+    network('foo.com/ads$important', {
+      ...base,
+      filter: 'foo.com/ads',
+      isImportant: true,
+    });
+  });
+
+  it('parses ||pattern', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isHostnameAnchor: true,
+      isPlain: true,
+    };
+
+    network('||foo.com', {
+      ...base,
+      filter: '',
+      hostname: 'foo.com',
+    });
+    network('||foo.com$important', {
+      ...base,
+      filter: '',
+      hostname: 'foo.com',
+      isImportant: true,
+    });
+    network('||foo.com/bar/baz$important', {
+      ...base,
+      filter: '/bar/baz',
+      hostname: 'foo.com',
+      isImportant: true,
+      isLeftAnchor: true,
+    });
+  });
+
+  it('parses ||pattern|', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isHostnameAnchor: true,
+      isRightAnchor: true,
+    };
+
+    network('||foo.com|', {
+      ...base,
+      filter: '',
+      hostname: 'foo.com',
+      isPlain: true,
+    });
+    network('||foo.com|$important', {
+      ...base,
+      filter: '',
+      hostname: 'foo.com',
+      isImportant: true,
+      isPlain: true,
+    });
+    network('||foo.com/bar/baz|$important', {
+      ...base,
+      filter: '/bar/baz',
+      hostname: 'foo.com',
+      isImportant: true,
+      isLeftAnchor: true,
+      isPlain: true,
+    });
+    network('||foo.com^bar/*baz|$important', {
+      ...base,
+      filter: '^bar/*baz',
+      hostname: 'foo.com',
+      isImportant: true,
+      isLeftAnchor: true,
+      isRegex: true,
+    });
+  });
+
+  it('parses |pattern', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isLeftAnchor: true,
+    };
+
+    network('|foo.com', {
+      ...base,
+      filter: 'foo.com',
+      hostname: '',
+      isPlain: true,
+    });
+    network('|foo.com/bar/baz', {
+      ...base,
+      filter: 'foo.com/bar/baz',
+      hostname: '',
+      isPlain: true,
+    });
+    network('|foo.com^bar/*baz*', {
+      ...base,
+      filter: 'foo.com^bar/*baz', // Trailing * is stripped
+      hostname: '',
+      isRegex: true,
+    });
+  });
+
+  it('parses |pattern|', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isLeftAnchor: true,
+      isRightAnchor: true,
+    };
+
+    network('|foo.com|', {
+      ...base,
+      filter: 'foo.com',
+      hostname: '',
+      isPlain: true,
+    });
+    network('|foo.com/bar|', {
+      ...base,
+      filter: 'foo.com/bar',
+      hostname: '',
+      isPlain: true,
+    });
+    network('|foo.com/*bar^|', {
+      ...base,
+      filter: 'foo.com/*bar^',
+      hostname: '',
+      isRegex: true,
+    });
+  });
+
+  it('parses regexp', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isRegex: true,
+    };
+
+    network('*bar^', {
+      ...base,
+      filter: 'bar^',
+      hostname: '',
+    });
+    network('foo.com/*bar^', {
+      ...base,
+      filter: 'foo.com/*bar^',
+      hostname: '',
+    });
+  });
+
+  it('parses ||regexp', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isHostnameAnchor: true,
+      isRegex: true,
+    };
+
+    network('||foo.com*bar^', {
+      ...base,
+      filter: '*bar^',
+      hostname: 'foo.com',
+    });
+    network('||foo.com^bar*/baz^', {
+      ...base,
+      filter: '^bar*/baz^',
+      hostname: 'foo.com',
+      isLeftAnchor: true,
+    });
+  });
+
+  it('parses ||regexp|', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isHostnameAnchor: true,
+      isRegex: true,
+      isRightAnchor: true,
+    };
+
+    network('||foo.com*bar^|', {
+      ...base,
+      filter: '*bar^',
+      hostname: 'foo.com',
+    });
+    network('||foo.com^bar*/baz^|', {
+      ...base,
+      filter: '^bar*/baz^',
+      hostname: 'foo.com',
+      isLeftAnchor: true,
+    });
+  });
+
+  it('parses |regexp', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isLeftAnchor: true,
+      isRegex: true,
+    };
+
+    network('|foo.com*bar^', {
+      ...base,
+      filter: 'foo.com*bar^',
+      hostname: '',
+    });
+    network('|foo.com^bar*/baz^', {
+      ...base,
+      filter: 'foo.com^bar*/baz^',
+      hostname: '',
+    });
+  });
+
+  it('parses |regexp|', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isLeftAnchor: true,
+      isRegex: true,
+      isRightAnchor: true,
+    };
+
+    network('|foo.com*bar^|', {
+      ...base,
+      filter: 'foo.com*bar^',
+      hostname: '',
+    });
+    network('|foo.com^bar*/baz^|', {
+      ...base,
+      filter: 'foo.com^bar*/baz^',
+      hostname: '',
+    });
+  });
+
+  it('parses exceptions', () => {
+    const base = {
+      ...DEFAULT_NETWORK_FILTER,
+      isException: true,
+    };
+
+    network('@@ads', {
+      ...base,
+      filter: 'ads',
+      isPlain: true,
+    });
+    network('@@||foo.com/ads', {
+      ...base,
+      filter: '/ads',
+      hostname: 'foo.com',
+      isHostnameAnchor: true,
+      isLeftAnchor: true,
+      isPlain: true,
+    });
+    network('@@|foo.com/ads', {
+      ...base,
+      filter: 'foo.com/ads',
+      isLeftAnchor: true,
+      isPlain: true,
+    });
+    network('@@|foo.com/ads|', {
+      ...base,
+      filter: 'foo.com/ads',
+      isLeftAnchor: true,
+      isPlain: true,
+      isRightAnchor: true,
+    });
+    network('@@foo.com/ads|', {
+      ...base,
+      filter: 'foo.com/ads',
+      isPlain: true,
+      isRightAnchor: true,
+    });
+    network('@@||foo.com/ads|', {
+      ...base,
+      filter: '/ads',
+      hostname: 'foo.com',
+      isHostnameAnchor: true,
+      isLeftAnchor: true,
+      isPlain: true,
+      isRightAnchor: true,
+    });
+  });
+
+  describe('regexp patterns', () => {
+    for (const filter of [
+      '/pattern/',
+      '@@/pattern/',
+      '//',
+      '//$script',
+      '//$image',
+      '//[0-9].*-.*-[a-z0-9]{4}/$script',
+      '/.space/[0-9]{2,9}/$/$script',
+    ]) {
+      it(filter, () => {
+        network(filter, {
+          isFullRegex: true,
+        });
+      });
+    }
+
+    for (const filter of [
+      '||foo.com/pattern/',
+      '||foo.com/pattern/$script',
+      '@@||foo.com/pattern/$script',
+      '@@|foo.com/pattern/$script',
+      '|foo.com/pattern/$script',
+    ]) {
+      it(filter, () => {
+        network(filter, {
+          isFullRegex: false,
+        });
+      });
+    }
+  });
+
+  describe('options', () => {
+    it('accepts any content type', () => {
+      network('||foo.com', { fromAny: true });
+      network('||foo.com$first-party', { fromAny: true });
+      network('||foo.com$third-party', { fromAny: true });
+      network('||foo.com$domain=test.com', { fromAny: true });
+    });
+
+    [
+      'image',
+      'media',
+      'object',
+      'object-subrequest',
+      'other',
+      'ping',
+      'script',
+      'font',
+      'stylesheet',
+      'xmlhttprequest',
+    ].forEach((option) => {
+      it(`does not accept any content type: ~${option}`, () => {
+        network(`||foo.com$~${option}`, { fromAny: false });
+        network(`||foo.com$${option}`, { fromAny: false });
+      });
+    });
+
+    describe('important', () => {
+      it('parses important', () => {
+        network('||foo.com$important', { isImportant: true });
+      });
+
+      it('parses ~important', () => {
+        // Not supported
+        network('||foo.com$~important', null);
+      });
+
+      it('defaults to false', () => {
+        network('||foo.com', { isImportant: false });
+      });
+    });
+
+    it('inline-font', () => {
+      network('||foo.com$inline-font', {
+        csp: "font-src 'self' 'unsafe-eval' http: https: data: blob: mediastream: filesystem:",
+        isCSP: true,
+      });
+    });
+
+    it('inline-script', () => {
+      network('||foo.com$inline-script', {
+        csp: "script-src 'self' 'unsafe-eval' http: https: data: blob: mediastream: filesystem:",
+        isCSP: true,
+      });
+    });
+
+    describe('csp', () => {
+      it('defaults to no csp', () => {
+        network('||foo.com', {
+          csp: undefined,
+          isCSP: false,
+        });
+      });
+
+      it('parses simple csp', () => {
+        network('||foo.com$csp=self bar ""', {
+          csp: 'self bar ""',
+          isCSP: true,
+        });
+      });
+
+      it('parses empty csp', () => {
+        network('||foo.com$csp', {
+          csp: undefined,
+          isCSP: true,
+        });
+      });
+
+      it('parses csp mixed with other options', () => {
+        network('||foo.com$domain=foo|bar,csp=self bar "",image', {
+          csp: 'self bar ""',
+          fromImage: true,
+          isCSP: true,
+        });
+      });
+    });
+
+    describe('domain', () => {
+      ['domain', 'from'].forEach((option) => {
+        it(`parses domain`, () => {
+          network(`||foo.com$${option}=bar.com`, {
+            domains: {
+              hostnames: h(['bar.com']),
+              entities: undefined,
+              notHostnames: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+
+          network(`||foo.com$${option}=bar.com|baz.com`, {
+            domains: {
+              hostnames: h(['bar.com', 'baz.com']),
+              entities: undefined,
+              notHostnames: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+        });
+
+        it('parses ~domain', () => {
+          network(`||foo.com$${option}=~bar.com`, {
+            domains: {
+              notHostnames: h(['bar.com']),
+              entities: undefined,
+              hostnames: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+
+          network(`||foo.com$${option}=~bar.com|~baz.com`, {
+            domains: {
+              notHostnames: h(['bar.com', 'baz.com']),
+              entities: undefined,
+              hostnames: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+        });
+
+        it('parses domain and ~domain', () => {
+          network(`||foo.com$${option}=~bar.com|baz.com`, {
+            domains: {
+              hostnames: h(['baz.com']),
+              notHostnames: h(['bar.com']),
+              entities: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+
+          network(`||foo.com$${option}=bar.com|~baz.com`, {
+            domains: {
+              hostnames: h(['bar.com']),
+              notHostnames: h(['baz.com']),
+              entities: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+
+          network(`||foo.com$${option}=foo|~bar|baz`, {
+            domains: {
+              hostnames: h(['foo', 'baz']),
+              notHostnames: h(['bar']),
+              entities: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+        });
+
+        it('accepts entities', () => {
+          network(`||foo.com$${option}=foo.*|~bar.*|baz`, {
+            domains: {
+              hostnames: h(['baz']),
+              notHostnames: undefined,
+              entities: h(['foo']),
+              notEntities: h(['bar']),
+              parts: undefined,
+            },
+          });
+        });
+      });
+
+      it('defaults to no constraint', () => {
+        network('||foo.com', {
+          domains: undefined,
+        });
+      });
+    });
+
+    describe('denyallow', () => {
+      it('parses denyallow', () => {
+        network('||foo.com$domain=foo.com,denyallow=bar.com', {
+          domains: {
+            hostnames: h(['foo.com']),
+            entities: undefined,
+            notHostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+          denyallow: {
+            hostnames: h(['bar.com']),
+            entities: undefined,
+            notHostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+        });
+
+        network('||foo.com$domain=foo.com,denyallow=bar.com|baz.com', {
+          domains: {
+            hostnames: h(['foo.com']),
+            entities: undefined,
+            notHostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+          denyallow: {
+            hostnames: h(['bar.com', 'baz.com']),
+            entities: undefined,
+            notHostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+        });
+      });
+
+      it('parses ~denyallow', () => {
+        network('||foo.com$domain=foo.com,denyallow=~bar.com', {
+          domains: {
+            hostnames: h(['foo.com']),
+            entities: undefined,
+            notHostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+          denyallow: {
+            notHostnames: h(['bar.com']),
+            entities: undefined,
+            hostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+        });
+
+        network('||foo.com$domain=foo.com,denyallow=~bar.com|~baz.com', {
+          domains: {
+            hostnames: h(['foo.com']),
+            entities: undefined,
+            notHostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+          denyallow: {
+            notHostnames: h(['bar.com', 'baz.com']),
+            entities: undefined,
+            hostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+        });
+      });
+
+      it('parses denyallow and ~denyallow', () => {
+        network('||foo.com$domain=foo.com,denyallow=~bar.com|baz.com', {
+          domains: {
+            hostnames: h(['foo.com']),
+            notHostnames: undefined,
+            entities: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+          denyallow: {
+            hostnames: h(['baz.com']),
+            notHostnames: h(['bar.com']),
+            entities: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+        });
+
+        network('||foo.com$domain=foo.com,denyallow=bar.com|~baz.com', {
+          domains: {
+            hostnames: h(['foo.com']),
+            notHostnames: undefined,
+            entities: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+          denyallow: {
+            hostnames: h(['bar.com']),
+            notHostnames: h(['baz.com']),
+            entities: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+        });
+
+        network('||foo.com$domain=foo.com,denyallow=foo|~bar|baz', {
+          domains: {
+            hostnames: h(['foo.com']),
+            notHostnames: undefined,
+            entities: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+          denyallow: {
+            hostnames: h(['foo', 'baz']),
+            notHostnames: h(['bar']),
+            entities: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+        });
+      });
+
+      it('accepts entities', () => {
+        network('||foo.com$domain=foo.com,denyallow=foo.*|~bar.*|baz', {
+          domains: {
+            hostnames: h(['foo.com']),
+            notHostnames: undefined,
+            entities: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+          denyallow: {
+            hostnames: h(['baz']),
+            notHostnames: undefined,
+            entities: h(['foo']),
+            notEntities: h(['bar']),
+            parts: undefined,
+          },
+        });
+      });
+
+      it('defaults to no constraint', () => {
+        network('||foo.com', {
+          denyallow: undefined,
+        });
+      });
+
+      context('to', () => {
+        it('translates positives to domains and negatives to denyallow', () => {
+          network('||foo.com$to=foo.com|~bar.com,denyallow=bar.com|~foo.com', {
+            domains: {
+              hostnames: h(['foo.com']),
+              entities: undefined,
+              notHostnames: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+            denyallow: {
+              hostnames: h(['bar.com']),
+              entities: undefined,
+              notHostnames: h(['foo.com']),
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+          network('||foo.com$to=bar.com|baz.com', {
+            domains: {
+              hostnames: h(['bar.com', 'baz.com']),
+              entities: undefined,
+              notHostnames: undefined,
+              notEntities: undefined,
+              parts: undefined,
+            },
+          });
+        });
+        it('requires $domain requirement', () => {
+          expect(
+            FilterEngine.parse(
+              `
+###selector
+@@*$ghide,to=~foo.com
+`,
+            ).getCosmeticsFilters({
+              domain: 'bar.com',
+              hostname: 'bar.com',
+              url: 'https://bar.com',
+              getRulesFromDOM: true,
+              ids: ['selector'],
+            }).styles,
+          ).to.equal('#selector { display: none !important; }');
+        });
+      });
+    });
+
+    describe('redirect', () => {
+      it('parses redirect', () => {
+        network('||foo.com$redirect=bar.js', {
+          isRedirect: true,
+          redirect: 'bar.js',
+        });
+        network('$redirect=bar.js', {
+          isRedirect: true,
+          redirect: 'bar.js',
+        });
+      });
+
+      it('parses ~redirect', () => {
+        // ~redirect is not a valid option
+        network('||foo.com$~redirect', null);
+        network('||foo.com$~redirect=foo.js', null);
+      });
+
+      it('parses redirect without a value', () => {
+        // Not valid
+        network('||foo.com$redirect', null);
+        network('||foo.com$redirect=', null);
+        network('||foo.com$redirect=:1', null);
+        network('||foo.com$redirect=name:', null);
+        network('||foo.com$redirect=name:c0ffe', null);
+      });
+
+      it('defaults to false', () => {
+        network('||foo.com', {
+          isRedirect: false,
+          redirect: '',
+        });
+      });
+    });
+
+    describe('redirect-rule', () => {
+      it('parses redirect-rule', () => {
+        network('||foo.com$redirect-rule=bar.js', {
+          isRedirect: true,
+          isRedirectRule: true,
+          redirect: 'bar.js',
+        });
+        network('$redirect-rule=bar.js', {
+          isRedirect: true,
+          isRedirectRule: true,
+          redirect: 'bar.js',
+        });
+      });
+
+      it('parses ~redirect-rule', () => {
+        // ~redirect-rule is not a valid option
+        network('||foo.com$~redirect-rule=foo.js', null);
+        network('||foo.com$~redirect-rule', null);
+      });
+
+      it('parses redirect-rule without a value', () => {
+        // Not valid
+        network('||foo.com$redirect-rule', null);
+        network('||foo.com$redirect-rule=', null);
+        network('||foo.com$redirect-rule=:1', null);
+        network('||foo.com$redirect-rule=name:', null);
+      });
+
+      it('defaults to false', () => {
+        network('||foo.com', {
+          isRedirectRule: false,
+          redirect: '',
+        });
+      });
+    });
+
+    describe('removeparam', () => {
+      it('parses ~removeparam', () => {
+        // ~removeparam is not a valid option
+        network('||foo.com$~removeparam=utm', null);
+        network('||foo.com$~removeparam', null);
+      });
+
+      it('parses removeparam', () => {
+        network('||foo.com$removeparam=utm', {
+          removeparam: 'utm',
+          isRemoveParam: true,
+        });
+      });
+
+      it('parses removeparam without a value', () => {
+        network('||foo.com$removeparam', {
+          removeparam: '',
+          isRemoveParam: true,
+        });
+      });
+
+      it('parses removeparam inversion', () => {
+        network('||foo.com$removeparam=~x', {
+          removeparam: '~x',
+          isRemoveParam: true,
+        });
+      });
+    });
+
+    describe('match-case', () => {
+      it('parses match-case', () => {
+        // $match-case is not supported on URL filters
+        network('||foo.com$match-case', null);
+      });
+
+      it('parses ~match-case', () => {
+        // ~match-case is not supported
+        network('||foo.com$~match-case', null);
+      });
+
+      context('regex', () => {
+        it('parses match-case with regexp', () => {
+          // case-sensitivity should be preserved
+          network('/Foo/$match-case', {
+            filter: '/Foo/',
+            regex: /Foo/,
+            isRegex: true,
+            isCaseSensitive: true,
+          });
+        });
+      });
+    });
+
+    describe('first-party', () => {
+      for (const option of ['first-party', '1p', '~third-party', '~3p']) {
+        for (const base of ['||foo.com', '@@||foo.com', '@@||foo.com/bar']) {
+          const filter = `${base}$${option}`;
+          it(filter, () => {
+            network(filter, { thirdParty: false, firstParty: true });
+          });
+        }
+      }
+
+      it('defaults to true', () => {
+        network('||foo.com', { thirdParty: true });
+      });
+    });
+
+    describe('third-party', () => {
+      for (const option of ['third-party', '3p', '~first-party', '~1p']) {
+        for (const base of ['||foo.com', '@@||foo.com', '@@||foo.com/bar']) {
+          const filter = `${base}$${option}`;
+          it(filter, () => {
+            network(filter, { thirdParty: true, firstParty: false });
+          });
+        }
+      }
+
+      it('defaults to true', () => {
+        network('||foo.com', { thirdParty: true });
+      });
+    });
+
+    it('all', () => {
+      network('||foo.com^$all', {
+        isHostnameAnchor: true,
+        isPlain: true,
+
+        firstParty: true,
+        fromAny: true,
+        fromImage: true,
+        fromMedia: true,
+        fromObject: true,
+        fromOther: true,
+        fromPing: true,
+        fromScript: true,
+        fromStylesheet: true,
+        fromSubdocument: true,
+        fromWebsocket: true,
+        fromXmlHttpRequest: true,
+        thirdParty: true,
+      });
+    });
+
+    it('badfilter', () => {
+      network('||foo.com^$badfilter', { isBadFilter: true });
+      network('@@||foo.com^$badfilter', { isBadFilter: true, isException: true });
+    });
+
+    describe('generichide', () => {
+      network('||foo.com^$ghide', { isGenericHide: true });
+      network('@@||foo.com^$ghide', { isGenericHide: true, isException: true });
+      network('||foo.com^$generichide', { isGenericHide: true });
+      network('@@||foo.com^$generichide', { isGenericHide: true, isException: true });
+    });
+
+    describe('specifichide', () => {
+      network('||foo.com^$shide', { isSpecificHide: true });
+      network('@@||foo.com^$shide', { isSpecificHide: true, isException: true });
+      network('||foo.com^$specifichide', { isSpecificHide: true });
+      network('@@||foo.com^$specifichide', { isSpecificHide: true, isException: true });
+    });
+
+    describe('elemhide', () => {
+      network('||foo.com^$ehide', { isElemHide: true });
+      network('@@||foo.com^$ehide', { isElemHide: true, isException: true });
+
+      network('||foo.com^$shide,ghide', { isElemHide: true });
+      network('@@||foo.com^$shide,ghide', { isElemHide: true, isException: true });
+
+      network('||foo.com^$elemhide', { isElemHide: true });
+      network('@@||foo.com^$elemhide', { isElemHide: true, isException: true });
+
+      network('||foo.com^$generichide,specifichide', { isElemHide: true });
+      network('@@||foo.com^$generichide,specifichide', { isElemHide: true, isException: true });
+    });
+
+    describe('replace', () => {
+      it('parses known filters', () => {
+        const filters: [string, HTMLModifier][] = [
+          [
+            String.raw`||alliptvlinks.com/tktk-content/plugins/$script,1p,replace=/\bconst now.+?, 100/clearInterval(timer);resolve();}, 100/gms`,
+            [/\bconst now.+?, 100/gms, 'clearInterval(timer);resolve();}, 100'],
+          ],
+          [
+            String.raw`/theme/002/js/application.js?2.0|$script,1p,replace=/video\.maxPop/0/`,
+            [/video\.maxPop/, '0'],
+          ],
+          [
+            String.raw`||s3media.247sports.com/Scripts/Bundle/*/videoPlayer.js^$script,1p,replace=/;if\(!\([a-z]+\|\|\(null===[^{]+/;if(false)/`,
+            [/;if\(!\([a-z]+\|\|\(null===[^{]+/, ';if(false)'],
+          ],
+          [
+            String.raw`||dehlinks.ir/link_download.php?Mozojadid_Id=$doc,replace=/content="15;/content="0;/`,
+            [/content="15;/, 'content="0;'],
+          ],
+          [
+            String.raw`||rekidai-info.github.io/_app/immutable/components/pages/index/_page.svelte-$script,replace=/try\{.*?catch.*?push\(\)\}catch\{//`,
+            [/try\{.*?catch.*?push\(\)\}catch\{/, ''],
+          ],
+          [
+            String.raw`||rekidai-info.github.io/_app/immutable/components/pages/index/_page.svelte-$script,replace=/throw new Error\("Error Loading Rekidai Data."\)\}throw new Error\("Ad block detected."\)//`,
+            [
+              /throw new Error\("Error Loading Rekidai Data."\)\}throw new Error\("Ad block detected."\)/,
+              '',
+            ],
+          ],
+          [
+            String.raw`||veev.to/assets/videoplayer/*.js$script,replace=/\bhttps:\/\/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/https:\/\/veev.to\/assets\/videoplayer\/17c088d.js/`,
+            [
+              /\bhttps:\/\/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/,
+              'https://veev.to/assets/videoplayer/17c088d.js',
+            ],
+          ],
+          [
+            String.raw`||theappstore.org/script.js?v=$script,1p,replace=/result\.length \> 10000/result.length < 10000/g`,
+            [/result\.length > 10000/g, 'result.length < 10000'],
+          ],
+          [
+            String.raw`/loader.min.js$xhr,script,domain=loawa.com|ygosu.com|sportalkorea.com|enetnews.co.kr|edaily.co.kr|economist.co.kr|etoday.co.kr|hankyung.com|isplus.com|hometownstation.com|inven.co.kr|honkailab.com|warcraftrumbledeck.com|genshinlab.com|thestockmarketwatch.com|thephoblographer.com|issuya.com|dogdrip.net|worldhistory.org|bamgosu.site,replace=/\)\{var [a-z]{1,2},[a-z]{1,2},[a-z]{1,2},[a-z]{1,2}\=[a-z]{2};return [a-z]\(\)/){return;/g`,
+            [
+              /\)\{var [a-z]{1,2},[a-z]{1,2},[a-z]{1,2},[a-z]{1,2}=[a-z]{2};return [a-z]\(\)/g,
+              '){return;',
+            ],
+          ],
+          [
+            String.raw`/loader.min.js$xhr,script,domain=loawa.com|ygosu.com|sportalkorea.com|enetnews.co.kr|edaily.co.kr|economist.co.kr|etoday.co.kr|hankyung.com|isplus.com|hometownstation.com|inven.co.kr|honkailab.com|warcraftrumbledeck.com|genshinlab.com|thestockmarketwatch.com|thephoblographer.com|issuya.com|dogdrip.net|worldhistory.org|bamgosu.site,replace=/\)\{var [a-z]{1,2},[a-z]{1,2},[a-z]{1,2};.*?return [a-z]\(\)/){return; return c()/g`,
+            [
+              /\)\{var [a-z]{1,2},[a-z]{1,2},[a-z]{1,2};.*?return [a-z]\(\)/g,
+              '){return; return c()',
+            ],
+          ],
+          [
+            String.raw`/loader.min.js$xhr,script,domain=loawa.com|ygosu.com|sportalkorea.com|enetnews.co.kr|edaily.co.kr|economist.co.kr|etoday.co.kr|hankyung.com|isplus.com|hometownstation.com|inven.co.kr|honkailab.com|warcraftrumbledeck.com|genshinlab.com|thestockmarketwatch.com|thephoblographer.com|issuya.com|dogdrip.net|worldhistory.org,replace=/\.mark\(\(function [a-z0-9]{1,2}\([a-z0-9]{1,2},[a-z0-9]{1,2}\){var.*\]\]\)\}\)\)\),/.mark((function neutralized(a,b){var none = false;}))),/g`,
+            [
+              /\.mark\(\(function [a-z0-9]{1,2}\([a-z0-9]{1,2},[a-z0-9]{1,2}\){var.*\]\]\)\}\)\)\),/g,
+              '.mark((function neutralized(a,b){var none = false;}))),',
+            ],
+          ],
+          [
+            String.raw`||bitcotasks.com/assets/js/mainjs.php$script,1p,replace=/entry.duration > 0/entry.duration < 10/`,
+            [/entry.duration > 0/, 'entry.duration < 10'],
+          ],
+          [
+            String.raw`||d3lj2s469wtjp0.cloudfront.net/build/js/public/$script,3p,replace=/\{try\{.*?clip-path.*?catch\(/{try{}catch(/,domain=puzzle-loop.com|puzzle-words.com|puzzle-chess.com|puzzle-thermometers.com|puzzle-norinori.com|puzzle-minesweeper.com|puzzle-slant.com|puzzle-lits.com|puzzle-galaxies.com|puzzle-tents.com|puzzle-battleships.com|puzzle-pipes.com|puzzle-hitori.com|puzzle-heyawake.com|puzzle-shingoki.com|puzzle-masyu.com|puzzle-stitches.com|puzzle-aquarium.com|puzzle-tapa.com|puzzle-star-battle.com|puzzle-kakurasu.com|puzzle-skyscrapers.com|puzzle-futoshiki.com|puzzle-shakashaka.com|puzzle-kakuro.com|puzzle-jigsaw-sudoku.com|puzzle-killer-sudoku.com|puzzle-binairo.com|puzzle-nonograms.com|puzzle-sudoku.com|puzzle-light-up.com|puzzle-bridges.com|puzzle-shikaku.com|puzzle-nurikabe.com|puzzle-dominosa.com`,
+            [/\{try\{.*?clip-path.*?catch\(/, '{try{}catch('],
+          ],
+          [
+            String.raw`||statics.1mv.xyz/statics/*.js|$script,3p,replace=/;return _0x[a-z0-9]+\['[_a-z]+'\]\['s'\]/;return false/`,
+            [/;return _0x[a-z0-9]+\['[_a-z]+'\]\['s'\]/, ';return false'],
+          ],
+          [
+            String.raw`||statics.1mv.xyz/statics/*.js|$script,3p,replace=/;if\(null!==\(_0x[a-z0-9]+=this\['[_a-z]+'\]\)[^)]+\)return;/;if(true)return;/`,
+            [/;if\(null!==\(_0x[a-z0-9]+=this\['[_a-z]+'\]\)[^)]+\)return;/, ';if(true)return;'],
+          ],
+          [
+            String.raw`||in-jpn.com^$script,replace=/var w_status[\s\S\n]+?doSakigake\(\);[\s\S\n]+?\}//,badfilter`,
+            [/var w_status[\s\S\n]+?doSakigake\(\);[\s\S\n]+?\}/, ''],
+          ],
+          [
+            String.raw`||in-jpn.com^$script,replace=/var w_\w+[\s\S\n]+?doSakigake\(\);[\s\S\n]+?\}//`,
+            [/var w_\w+[\s\S\n]+?doSakigake\(\);[\s\S\n]+?\}/, ''],
+          ],
+          [
+            String.raw`||www.facebook.com/api/graphql/$xhr,replace=/\{"brs_content_label":[^,]+,"category":"ENGAGEMENT[^\n]+"cursor":"[^"]+"\}/{}/g`,
+            [/\{"brs_content_label":[^,]+,"category":"ENGAGEMENT[^\n]+"cursor":"[^"]+"\}/g, '{}'],
+          ],
+          [
+            String.raw`||solarmovie.vip/js/$script,1p,replace=/\(\{checkers\:.*?\]\}\)/({checkers:[]})/g`,
+            [/\(\{checkers:.*?\]\}\)/g, '({checkers:[]})'],
+          ],
+          [
+            String.raw`||tver.jp/_next/static/chunks/$replace=/e\?(e\(\):\(n\.play\(\))/!1?\$1/,script`,
+            [/e\?(e\(\):\(n\.play\(\))/, '!1?\\$1'],
+          ],
+          [
+            String.raw`||www.youtube.com/playlist?list=$xhr,1p,replace=/"adPlacements.*?([A-Z]"\}|"\}{2\,4})\}\]\,//`,
+            [/"adPlacements.*?([A-Z]"\}|"\}{2,4})\}\],/, ''],
+          ],
+          [
+            String.raw`||www.youtube.com/playlist?list=$xhr,1p,replace=/"adSlots.*?\}\]\}\}\]\,//`,
+            [/"adSlots.*?\}\]\}\}\],/, ''],
+          ],
+          [
+            String.raw`||www.youtube.com/watch?v=$xhr,1p,replace=/"adPlacements.*?([A-Z]"\}|"\}{2\,4})\}\]\,//`,
+            [/"adPlacements.*?([A-Z]"\}|"\}{2,4})\}\],/, ''],
+          ],
+          [
+            String.raw`||www.youtube.com/watch?v=$xhr,1p,replace=/"adSlots.*?\}\]\}\}\]\,//`,
+            [/"adSlots.*?\}\]\}\}\],/, ''],
+          ],
+          [
+            String.raw`||www.youtube.com/youtubei/v1/player?$xhr,1p,replace=/"adPlacements.*?([A-Z]"\}|"\}{2\,4})\}\]\,//`,
+            [/"adPlacements.*?([A-Z]"\}|"\}{2,4})\}\],/, ''],
+          ],
+          [
+            String.raw`||www.youtube.com/youtubei/v1/player?$xhr,1p,replace=/"adSlots.*?\}\]\}\}\]\,//`,
+            [/"adSlots.*?\}\]\}\}\],/, ''],
+          ],
+          [
+            String.raw`||www.facebook.com/api/graphql/$xhr,replace=/\{"brs_content_label":[^,]+,"category":"SPONSORED"[^\n]+"cursor":"[^"]+"\}/{}/`,
+            [/\{"brs_content_label":[^,]+,"category":"SPONSORED"[^\n]+"cursor":"[^"]+"\}/, '{}'],
+          ],
+          [
+            String.raw`||www.facebook.com/api/graphql/$xhr,replace=/\{"node":\{"role":"SEARCH_ADS"[^\n]+?cursor":[^}]+\}/{}/g`,
+            [/\{"node":\{"role":"SEARCH_ADS"[^\n]+?cursor":[^}]+\}/g, '{}'],
+          ],
+          [
+            String.raw`||www.facebook.com/api/graphql/$xhr,replace=/\{"node":\{"__typename":"MarketplaceFeedAdStory"[^\n]+?"cursor":(?:null|"\{[^\n]+?\}"|[^\n]+?MarketplaceSearchFeedStoriesEdge")\}/{}/g`,
+            [
+              /\{"node":\{"__typename":"MarketplaceFeedAdStory"[^\n]+?"cursor":(?:null|"\{[^\n]+?\}"|[^\n]+?MarketplaceSearchFeedStoriesEdge")\}/g,
+              '{}',
+            ],
+          ],
+          // [String.raw`||domain.tld$replace`, [null, '']],
+        ];
+
+        for (const [text, [regexp, replacement]] of filters) {
+          const filter = NetworkFilter.parse(text);
+
+          expect(filter).not.to.be.null;
+          expect(filter!.isReplace()).to.be.true;
+
+          const htmlModifier = filter!.getHtmlModifier();
+
+          expect(htmlModifier).to.deep.be.eql(
+            [regexp, replacement],
+            `Problem with filter: ${text}`,
+          );
+        }
+      });
+
+      it('rejects invalid filters', () => {
+        const filters: string[] = [
+          // Empty option value without exception
+          '||foo.com$replace',
+          // Empty regexp matcher
+          '||foo.com$replace=///',
+        ];
+
+        for (const filter of filters) {
+          it(filter, () => {
+            expect(NetworkFilter.parse(filter)).to.be.null;
+          });
+        }
+      });
+    });
+
+    describe('un-supported options', () => {
+      ['genericblock', 'popunder', 'popup', 'woot'].forEach((unsupportedOption) => {
+        it(unsupportedOption, () => {
+          network(`||foo.com$${unsupportedOption}`, null);
+        });
+      });
+    });
+
+    describe('options sharing same field must be rejected', () => {
+      [
+        'redirect=empty',
+        'redirect-rule=empty',
+        'csp=a',
+        'inline-script',
+        'inline-font',
+        'content=/a/b/',
+        'replace=/a/b/',
+        'removeparam=a',
+      ].forEach((option, index, arr) => {
+        const option2 = arr[index === arr.length - 1 ? 0 : index + 1];
+        it(`${option} and ${option2}`, () => {
+          network(`||foo.com$${option},${option2}`, null);
+        });
+      });
+    });
+
+    const allOptions = (value: boolean) => ({
+      fromFont: value,
+      fromImage: value,
+      fromMedia: value,
+      fromObject: value,
+      fromOther: value,
+      fromPing: value,
+      fromScript: value,
+      fromStylesheet: value,
+      fromSubdocument: value,
+      fromWebsocket: value,
+      fromXmlHttpRequest: value,
+    });
+
+    [
+      ['font', 'fromFont'],
+      ['image', 'fromImage'],
+      ['media', 'fromMedia'],
+      ['object', 'fromObject'],
+      ['object-subrequest', 'fromObject'],
+      ['other', 'fromOther'],
+      ['ping', 'fromPing'],
+      ['beacon', 'fromPing'],
+      ['script', 'fromScript'],
+      ['stylesheet', 'fromStylesheet'],
+      ['css', 'fromStylesheet'],
+      ['subdocument', 'fromSubdocument'],
+      ['frame', 'fromSubdocument'],
+      ['websocket', 'fromWebsocket'],
+      ['xmlhttprequest', 'fromXmlHttpRequest'],
+      ['xhr', 'fromXmlHttpRequest'],
+      ['doc', 'fromDocument'],
+      ['document', 'fromDocument'],
+    ].forEach(([option, attribute]) => {
+      // all other attributes should be false if `$attribute` or true if `$~attribute`
+      describe(option, () => {
+        it(`parses ${option}`, () => {
+          network(`||foo.com$${option}`, {
+            ...allOptions(false),
+            [attribute]: true,
+          });
+          network(`||foo.com$object,${option}`, {
+            ...allOptions(false),
+            fromObject: true,
+            [attribute]: true,
+          });
+          network(`||foo.com$domain=bar.com,${option}`, {
+            ...allOptions(false),
+            [attribute]: true,
+          });
+        });
+
+        it(`parses ~${option}`, () => {
+          network(`||foo.com$~${option}`, {
+            ...allOptions(true),
+            [attribute]: false,
+          });
+          network(`||foo.com$${option},~${option}`, {
+            [attribute]: false,
+          });
+        });
+
+        it('defaults to true', () => {
+          network('||foo.com', {
+            ...allOptions(true),
+            [attribute]: true,
+          });
+        });
+      });
+    });
+  });
+
+  describe('#getTokens', () => {
+    for (const [filter, regexTokens] of [
+      // Wildcard
+      ['||geo*.hltv.org^', [hashStrings(['hltv', 'org'])]],
+
+      // RegExp with character class
+      ['/^foo$/', [hashStrings(['foo'])]],
+      ['/^fo\\so$/', [new Uint32Array(0)]],
+      ['/^fo\\wo$/', [new Uint32Array(0)]],
+      ['/^fo\\Bo$/', [new Uint32Array(0)]],
+      ['/^foo-bar\\Bo$/', [hashStrings(['foo'])]],
+
+      // All tokens are considered because none is special and surrounded by ^ and $
+      ['/^foo-bar-baz$/', [hashStrings(['foo', 'bar', 'baz'])]],
+      // All tokens except last one
+      ['/^foo-bar-baz+/', [hashStrings(['foo', 'bar'])]],
+      ['/^foo-bar-baz/', [hashStrings(['foo', 'bar'])]],
+      // All tokens except first one
+      ['/foo-bar-baz$/', [hashStrings(['bar', 'baz'])]],
+      ['/.foo-bar-baz$/', [hashStrings(['bar', 'baz'])]],
+
+      // Real filters
+      ['/:\\/\\/[A-Za-z0-9]+.ru\\/[A-Za-z0-9]{20,25}\\.js$/$doc', [hashStrings(['js'])]],
+      [
+        '/:\\/\\/[A-Za-z0-9]+.ru\\/[A-Za-z0-9]{20,25}\\.js/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/:\\/\\/[A-Za-z0-9]+.ru\\/[A-Za-z0-9]{20,25}.js/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/^https?:\\/\\/m\\.anysex\\.com\\/[a-zA-Z]{1,4}\\/[a-zA-Z]+\\.php$/$image,script',
+        [hashStrings(['php'])],
+      ],
+      [
+        '/^https:\\/\\/m\\.anysex\\.com\\/[a-zA-Z]{1,4}\\/[a-zA-Z]+\\.php$/$image,script',
+        [hashStrings(['https', 'anysex', 'com', 'php'])],
+      ],
+
+      [
+        '/wasabisyrup.com\\/storage\\/[-_a-zA-Z0-9]{8,}.gif/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/wasabisyrup\\.com\\/storage\\/[-_a-zA-Z0-9]{8,}.gif/$doc',
+        [hashStrings(['com', 'storage'])],
+      ],
+      [
+        '/^wasabisyrup\\.com\\/storage\\/[-_a-zA-Z0-9]{8,}.gif/$doc',
+        [hashStrings(['wasabisyrup', 'com', 'storage'])],
+      ],
+      [
+        '/.*(\\/proxy|\\.wasm|\\.wsm|\\.wa)$/$websocket,xmlhttprequest,badfilter',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.websocket]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr]),
+        ],
+      ],
+      [
+        '/^https?:\\/\\/([0-9a-z-]+\\.)?(9anime|animeland|animenova|animeplus|animetoon|animewow|gamestorrent|goodanime|gogoanime|igg-games|kimcartoon|memecenter|readcomiconline|toonget|toonova|watchcartoononline)\\.[a-z]{2,4}\\/(?!([Ee]xternal|[Ii]mages|[Ss]cripts|[Uu]ploads|ac|ajax|assets|combined|content|cov|cover|(img\\/bg)|(img\\/icon)|inc|jwplayer|player|playlist-cat-rss|static|thumbs|wp-content|wp-includes)\\/)(.*)/$first-party,script',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.script])],
+      ],
+      [
+        '/^https?:\\/\\/([0-9a-z\\-]+\\.)?(9anime|animeland|animenova|animeplus|animetoon|animewow|gamestorrent|goodanime|gogoanime|igg-games|kimcartoon|memecenter|readcomiconline|toonget|toonova|watchcartoononline)\\.[a-z]{2,4}\\/(?!([Ee]xternal|[Ii]mages|[Ss]cripts|[Uu]ploads|ac|ajax|assets|combined|content|cov|cover|(img\\/bg)|(img\\/icon)|inc|jwplayer|player|playlist-cat-rss|static|thumbs|wp-content|wp-includes)\\/)(.*)/$first-party,xmlhttprequest,badfilter',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr])],
+      ],
+      ['/https?:\\/\\/.*[=|&|%|#|+].*/$badfilter', [new Uint32Array(0)]],
+      [
+        '/^http*.:\\/\\/.*[a-zA-Z0-9]{10,}.*/$xmlhttprequest,badfilter',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr])],
+      ],
+      [
+        '@@/https?:\\/\\/.*[=|&|%|#|+].*/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/^https?:\\/\\/([0-9a-z\\-]+\\.)?(9anime|animeland|animenova|animeplus|animetoon|animewow|gamestorrent|goodanime|gogoanime|igg-games|kimcartoon|memecenter|readcomiconline|toonget|toonova|watchcartoononline)\\.[a-z]{2,4}\\/(?!([Ee]xternal|[Ii]mages|[Ss]cripts|[Uu]ploads|ac|ajax|assets|combined|content|cov|cover|(img\\/bg)|(img\\/icon)|inc|jwplayer|player|playlist-cat-rss|static|thumbs|wp-content|wp-includes)\\/)(.*)/$first-party,image,badfilter',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.image])],
+      ],
+      [
+        '/^https?:\\/\\/.*\\/.*[(php|?|=)].*/$first-party,image,badfilter',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.image])],
+      ],
+      [
+        '/^https?:\\/\\/([0-9a-z\\-]+\\.)?(9anime|animeland|animenova|animeplus|animetoon|animewow|gamestorrent|goodanime|gogoanime|igg-games|kimcartoon|memecenter|readcomiconline|toonget|toonova|watchcartoononline)\\.[a-z]{2,4}\\/(?!([Ee]xternal|[Ii]mages|[Ss]cripts|[Uu]ploads|ac|ajax|assets|combined|content|cov|cover|(img\\/bg)|(img\\/icon)|inc|jwplayer|player|playlist-cat-rss|static|thumbs|wp-content|wp-includes)\\/)(.*)/$first-party,image,badfilter',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.image])],
+      ],
+      [
+        '/^(https?|wss?):\\/\\/([0-9a-z\\-]+\\.)?([0-9a-z-]+\\.)(accountant|bid|cf|club|cricket|date|download|faith|fun|ga|gdn|gq|loan|men|ml|network|ovh|party|pro|pw|racing|review|rocks|ru|science|site|space|stream|tk|top|trade|webcam|win|xyz|zone)\\.\\/(.*)/$image,script,subdocument,websocket,xmlhttprequest',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.image]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.script]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.sub_frame]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.websocket]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr]),
+        ],
+      ],
+      [
+        '/^(https?|wss?):\\/\\/([0-9a-z-]+\\.)?([0-9a-z-]+\\.)(accountant|bid|cf|club|cricket|date|download|faith|fun|ga|gdn|gq|loan|men|ml|network|ovh|party|pro|pw|racing|review|rocks|science|site|space|stream|tk|top|trade|webcam|win|xyz|zone)\\/(.*)/$third-party,websocket',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.websocket])],
+      ],
+      [
+        '/([0-9]{1,3}\\.){3}[0-9]{1,3}.*(\\/proxy|\\.wasm|\\.wsm|\\.wa)$/$third-party,websocket',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.websocket])],
+      ],
+      [
+        '/.*(\\/proxy|\\.wasm|\\.wsm|\\.wa)$/$websocket,xmlhttprequest',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.websocket]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr]),
+        ],
+      ],
+      [
+        '/^https://www\\.narcity\\.com/assets/[0-9a-f]{24,}\\.js/$script',
+        [hashStrings(['https', 'www', 'narcity', 'com', 'assets'])],
+      ],
+      [
+        '/^https://www\\.mtlblog\\.com/assets/[0-9a-f]{24,}\\.js/$script',
+        [hashStrings(['https', 'www', 'mtlblog', 'com', 'assets'])],
+      ],
+      [
+        '/\\:\\/\\/data.*\\.com\\/[a-zA-Z0-9]{30,}/$third-party,xmlhttprequest',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr])],
+      ],
+      [
+        '/\\.(accountant|bid|click|club|com|cricket|date|download|faith|link|loan|lol|men|online|party|racing|review|science|site|space|stream|top|trade|webcam|website|win|xyz|com)\\/(([0-9]{2,9})(\\.|\\/)(css|\\?)?)$/$script,stylesheet,third-party,xmlhttprequest',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.script]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.stylesheet]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr]),
+        ],
+      ],
+      [
+        '/\\.accountant\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['accountant'])],
+      ],
+      [
+        '/\\.bid\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['bid'])],
+      ],
+      [
+        '/\\.click\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['click'])],
+      ],
+      [
+        '/\\.club\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['club'])],
+      ],
+      [
+        '/\\.com\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['com'])],
+      ],
+      [
+        '/\\.cricket\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['cricket'])],
+      ],
+      [
+        '/\\.date\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['date'])],
+      ],
+      [
+        '/\\.download\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['download'])],
+      ],
+      [
+        '/\\.faith\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['faith'])],
+      ],
+      [
+        '/\\.link\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['link'])],
+      ],
+      [
+        '/\\.loan\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['loan'])],
+      ],
+      [
+        '/\\.lol\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['lol'])],
+      ],
+      [
+        '/\\.men\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['men'])],
+      ],
+      [
+        '/\\.online\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['online'])],
+      ],
+      [
+        '/\\.party\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['party'])],
+      ],
+      [
+        '/\\.racing\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['racing'])],
+      ],
+      [
+        '/\\.review\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['review'])],
+      ],
+      [
+        '/\\.science\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['science'])],
+      ],
+      [
+        '/\\.site\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['site'])],
+      ],
+      [
+        '/\\.space\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['space'])],
+      ],
+      [
+        '/\\.stream\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['stream'])],
+      ],
+      [
+        '/\\.top\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['top'])],
+      ],
+      [
+        '/\\.trade\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['trade'])],
+      ],
+      [
+        '/\\.webcam\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['webcam'])],
+      ],
+      [
+        '/\\.website\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['website'])],
+      ],
+      [
+        '/\\.win\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['win'])],
+      ],
+      [
+        '/\\.xyz\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [hashStrings(['xyz'])],
+      ],
+      [
+        '/\\:\\/\\/[a-z0-9]{5,40}\\.com\\/[0-9]{2,9}\\/$/$script,stylesheet,third-party,xmlhttprequest',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.script]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.stylesheet]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr]),
+        ],
+      ],
+      [
+        '/\\:\\/\\/[a-z0-9]{5,}\\.com\\/[A-Za-z0-9]{3,}\\/$/$script,third-party,xmlhttprequest',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.script]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr]),
+        ],
+      ],
+      [
+        '/^https?:\\/\\/.*(bitly|bit)\\.(com|ly)\\/.*/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/^https?:\\/\\/.*\\/.*sw[0-9a-z(.|_)].*/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/^((?!(^https?):\\/\\/(ajax\\.googleapis\\.com|cdnjs\\.cloudflare\\.com|fonts\\.googleapis\\.com)\\/).*)$/$script,third-party',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.script])],
+      ],
+      [
+        '/^https?:\\/\\/([0-9a-z-]+\\.)?(9anime|animeland|animenova|animeplus|animetoon|animewow|gamestorrent|goodanime|gogoanime|igg-games|kimcartoon|memecenter|readcomiconline|toonget|toonova|watchcartoononline)\\.[a-z]{2,4}\\/(?!([Ee]xternal|[Ii]mages|[Ss]cripts|[Uu]ploads|ac|ajax|assets|combined|content|cov|cover|(img\\/bg)|(img\\/icon)|inc|jwplayer|player|playlist-cat-rss|static|thumbs|wp-content|wp-includes)\\/)(.*)/$image,other,script,~third-party,xmlhttprequest',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.image]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.other]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.script]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr]),
+        ],
+      ],
+      [
+        '/^https?:\\/\\/[\\w.-]*gelbooru\\.com.*[a-zA-Z0-9?!=@%#]{40,}/$image,other',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.image]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.other]),
+        ],
+      ],
+      ['/\\.filenuke\\.com/.*[a-zA-Z0-9]{4}/$script', [hashStrings(['filenuke', 'com'])]],
+      ['/\\.sharesix\\.com/.*[a-zA-Z0-9]{4}/$script', [hashStrings(['sharesix', 'com'])]],
+      [
+        '/^https?:\\/\\/([0-9]{1,3}\\.){3}[0-9]{1,3}/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/http*.:\\/\\/.*[a-zA-Z0-9]{110,}.*/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      ['/https?:\\/\\/.*[&|%|#|+|=].*/$doc', [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])]],
+      [
+        '/^https?:\\/\\/([0-9]{1,3}\\.){3}[0-9]{1,3}/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/\\/[0-9].*\\-.*\\-[a-z0-9]{4}/$script,xmlhttprequest',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.script]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.xhr]),
+        ],
+      ],
+      [
+        '/^https?:\\/\\/.*\\/.*[0-9a-z]{7,16}\\.js/$script',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.script])],
+      ],
+      [
+        '/^http://[a-zA-Z0-9]+\\.[a-z]+\\/.*(?:[!"#$%&()*+,:;<=>?@/\\^_`{|}~-]).*[a-zA-Z0-9]+/$script,third-party',
+        [hashStrings(['http'])],
+      ],
+      [
+        '/http://[a-zA-Z0-9]+\\.[a-z]+\\/.*(?:[!"#$%&()*+,:;<=>?@/\\^_`{|}~-]).*[a-zA-Z0-9]+/$script,third-party',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.script])],
+      ],
+      [
+        '/^https?:\\/\\/motherless\\.com\\/[a-z0-9A-Z]{3,}\\.[a-z0-9A-Z]{2,}\\_/$image,subdocument',
+        [
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.image]),
+          new Uint32Array([NORMALIZED_TYPE_TOKEN.sub_frame]),
+        ],
+      ],
+      [
+        '/^https?:\\/\\/.*\\/.*sw[0-9(.|_)].*/$script',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.script])],
+      ],
+      [
+        '/http*.:\\/\\/.*[?|=|&|%|#|+].*/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      [
+        '/\\:\\/\\/([0-9]{1,3}\\.){3}[0-9]{1,3}/$doc',
+        [new Uint32Array([NORMALIZED_TYPE_TOKEN.document])],
+      ],
+      ['@@/wp-content/themes/$script', [hashStrings(['content'])]],
+      ['||some.primewire.c*/sw$script,1p', [hashStrings(['some', 'primewire'])]],
+    ] as const) {
+      it(`get tokens for ${filter}`, () => {
+        const parsed = NetworkFilter.parse(filter, true);
+        expect(parsed).not.to.be.null;
+        if (parsed !== null) {
+          expect(parsed.getTokens()).to.eql(regexTokens);
+        }
+      });
+    }
+  });
+});
+
+function cosmetic(filter: string, expected: any) {
+  const parsed = CosmeticFilter.parse(filter);
+  if (parsed !== null) {
+    expect(parsed.isNetworkFilter()).to.be.false;
+    expect(parsed.isCosmeticFilter()).to.be.true;
+    const verbose = {
+      // Attributes
+      domains: parsed.domains,
+      parentDomains: parsed.parentDomains,
+      selector: parsed.getSelector(),
+      style: parsed.getStyle(),
+
+      // Options
+      isClassSelector: parsed.isClassSelector(),
+      isExtended: parsed.isExtended(),
+      isHrefSelector: parsed.isHrefSelector(),
+      isHtmlFiltering: parsed.isHtmlFiltering(),
+      isIdSelector: parsed.isIdSelector(),
+      isScriptInject: parsed.isScriptInject(),
+      hasSubFrameScriptInject: parsed.hasSubframeConstraint(),
+      isUnhide: parsed.isUnhide(),
+    };
+    expect(verbose).to.deep.include(expected);
+  } else {
+    expect(parsed).to.equal(expected);
+  }
+}
+
+const DEFAULT_COSMETIC_FILTER = {
+  // Attributes
+  selector: '',
+  style: DEFAULT_HIDING_STYLE,
+
+  // Options
+  isClassSelector: false,
+  isExtended: false,
+  isHrefSelector: false,
+  isHtmlFiltering: false,
+  isIdSelector: false,
+  isScriptInject: false,
+  isUnhide: false,
+};
+
+describe('Cosmetic filters', () => {
+  describe('#toString', () => {
+    const checkToString = (line: string, expected: string, debug: boolean = false) => {
+      const parsed = CosmeticFilter.parse(line, debug);
+      expect(parsed).not.to.be.null;
+      if (parsed !== null) {
+        expect(parsed.toString()).to.equal(expected);
+      }
+    };
+
+    ['##.selector'].forEach((line) => {
+      it(`pprint ${line}`, () => {
+        checkToString(line, line);
+      });
+    });
+
+    it('pprint with hostnames', () => {
+      checkToString('foo.com##+js(foo.js)', '<hostnames>##+js(foo.js)');
+      checkToString('foo.com##.selector', '<hostnames>##.selector');
+      checkToString('~foo.com##.selector', '<hostnames>##.selector');
+      checkToString('~foo.*##.selector', '<hostnames>##.selector');
+      checkToString('foo.*##.selector', '<hostnames>##.selector');
+    });
+
+    it('pprint with parent hostnames', () => {
+      checkToString('foo.com>>##+js(foo.js)', '<hostnames>>>##+js(foo.js)');
+      checkToString('foo.com>>,bar.com>>##+js(foo.js)', '<hostnames>>>##+js(foo.js)');
+      checkToString('foo.com>>,bar.com##+js(foo.js)', '<hostnames>,<hostnames>>>##+js(foo.js)');
+    });
+
+    it('pprint with debug=true', () => {
+      checkToString('foo.com##.selector', 'foo.com##.selector', true);
+    });
+  });
+
+  describe('#parse', () => {
+    cosmetic('##iframe[src]', {
+      ...DEFAULT_COSMETIC_FILTER,
+      selector: 'iframe[src]',
+    });
+
+    for (const { attr, name, symbol } of [
+      { attr: 'isClassSelector', name: 'class', symbol: '.' },
+      { attr: 'isIdSelector', name: 'id', symbol: '#' },
+    ]) {
+      describe(`${name} selectors`, () => {
+        for (const domains of ['', 'foo.com', 'foo.*', '~foo.com,foo.*']) {
+          for (const unhide of [true, false]) {
+            it('simple', () => {
+              const selector = `${symbol}selector`;
+              const filter = `${domains}${unhide ? '#@#' : '##'}${selector}`;
+              cosmetic(filter, {
+                ...DEFAULT_COSMETIC_FILTER,
+                [attr]: true,
+                isUnhide: unhide,
+                selector,
+              });
+            });
+
+            for (const invalidSeparator of ['~', ', ', '  ~ ', '+', '#', ']']) {
+              const selector = `${symbol}sele${invalidSeparator}ctor`;
+              const filter = `${domains}${unhide ? '#@#' : '##'}${selector}`;
+              it(`rejects ${filter}`, () => {
+                cosmetic(filter, {
+                  ...DEFAULT_COSMETIC_FILTER,
+                  [attr]: false,
+                  isUnhide: unhide,
+                  selector,
+                });
+              });
+            }
+
+            // Accepted compound selectors
+            for (const compound of [
+              '[]',
+              ' > selector',
+              ' ~ selector',
+              ' + selector',
+              ' .selector',
+              ' #selector',
+              '.selector',
+            ]) {
+              const selector = `${symbol}selector${compound}`;
+              const filter = `${domains}${unhide ? '#@#' : '##'}${selector}`;
+              it(`detects compound ${filter}`, () => {
+                cosmetic(filter, {
+                  ...DEFAULT_COSMETIC_FILTER,
+                  [attr]: true,
+                  isUnhide: unhide,
+                  selector,
+                });
+              });
+            }
+          }
+        }
+      });
+    }
+
+    describe('simple href selectors', () => {
+      for (const domains of ['', 'foo.com', 'foo.*', '~foo.com,foo.*']) {
+        for (const unhide of [true, false]) {
+          describe('rejects', () => {
+            for (const prefix of ['.class', '#id', 'selector']) {
+              for (const operator of ['~=', '|=', '$=']) {
+                const selector = `${prefix}[href${operator}"https://foo.com"]`;
+                const filter = `${domains}${unhide ? '#@#' : '##'}${selector}`;
+                it(filter, () => {
+                  cosmetic(filter, {
+                    isHrefSelector: false,
+                    isUnhide: unhide,
+                    selector,
+                  });
+                });
+              }
+            }
+          });
+
+          for (const prefix of ['a', '']) {
+            for (const operator of ['=', '*=', '^=']) {
+              // Accepts only double quotes
+              {
+                const selector = `${prefix}[href${operator}"https://foo.com"]`;
+                const filter = `${domains}${unhide ? '#@#' : '##'}${selector}`;
+                it(`detects ${filter}`, () => {
+                  cosmetic(filter, {
+                    ...DEFAULT_COSMETIC_FILTER,
+                    isHrefSelector: true,
+                    isUnhide: unhide,
+                    selector,
+                  });
+                });
+              }
+
+              // Rejects because of single quotes
+              {
+                const selector = `${prefix}[href${operator}'https://foo.com']`;
+                const filter = `${domains}${unhide ? '#@#' : '##'}${selector}`;
+                it(`rejects ${filter}`, () => {
+                  cosmetic(filter, {
+                    ...DEFAULT_COSMETIC_FILTER,
+                    isHrefSelector: false,
+                    isUnhide: unhide,
+                    selector,
+                  });
+                });
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+
+  it('parses hostnames', () => {
+    cosmetic('foo.com##selector', {
+      ...DEFAULT_COSMETIC_FILTER,
+      domains: {
+        hostnames: h(['foo.com']),
+        entities: undefined,
+        notHostnames: undefined,
+        notEntities: undefined,
+        parts: undefined,
+      },
+      selector: 'selector',
+    });
+    cosmetic('foo.com,bar.io##selector', {
+      ...DEFAULT_COSMETIC_FILTER,
+      domains: {
+        hostnames: h(['foo.com', 'bar.io']),
+        entities: undefined,
+        notHostnames: undefined,
+        notEntities: undefined,
+        parts: undefined,
+      },
+      selector: 'selector',
+    });
+    cosmetic('foo.com,bar.io,baz.*##selector', {
+      ...DEFAULT_COSMETIC_FILTER,
+      domains: {
+        entities: h(['baz']),
+        hostnames: h(['foo.com', 'bar.io']),
+        notHostnames: undefined,
+        notEntities: undefined,
+        parts: undefined,
+      },
+      selector: 'selector',
+    });
+
+    cosmetic('~entity.*,foo.com,~bar.io,baz.*,~entity2.*##selector', {
+      ...DEFAULT_COSMETIC_FILTER,
+      domains: {
+        entities: h(['baz']),
+        hostnames: h(['foo.com']),
+        notEntities: h(['entity', 'entity2']),
+        notHostnames: h(['bar.io']),
+        parts: undefined,
+      },
+      selector: 'selector',
+    });
+  });
+
+  it('parses parent hostnames', () => {
+    cosmetic('foo.com>>##+js(scriptlet)', {
+      ...DEFAULT_COSMETIC_FILTER,
+      selector: 'scriptlet',
+      isScriptInject: true,
+      hasSubFrameScriptInject: true,
+      parentDomains: {
+        entities: undefined,
+        hostnames: h(['foo.com']),
+        notEntities: undefined,
+        notHostnames: undefined,
+        parts: undefined,
+      },
+    });
+    cosmetic('foo.com>>,bar.com##+js(scriptlet)', {
+      ...DEFAULT_COSMETIC_FILTER,
+      selector: 'scriptlet',
+      isScriptInject: true,
+      hasSubFrameScriptInject: true,
+      domains: {
+        entities: undefined,
+        hostnames: h(['bar.com']),
+        notEntities: undefined,
+        notHostnames: undefined,
+        parts: undefined,
+      },
+      parentDomains: {
+        entities: undefined,
+        hostnames: h(['foo.com']),
+        notEntities: undefined,
+        notHostnames: undefined,
+        parts: undefined,
+      },
+    });
+    cosmetic('foo.*>>##+js(scriptlet)', {
+      ...DEFAULT_COSMETIC_FILTER,
+      selector: 'scriptlet',
+      isScriptInject: true,
+      hasSubFrameScriptInject: true,
+      parentDomains: {
+        entities: h(['foo']),
+        hostnames: undefined,
+        notEntities: undefined,
+        notHostnames: undefined,
+        parts: undefined,
+      },
+    });
+  });
+
+  it('parses unhide', () => {
+    cosmetic('foo.com#@#selector', {
+      ...DEFAULT_COSMETIC_FILTER,
+      domains: {
+        hostnames: h(['foo.com']),
+        entities: undefined,
+        notHostnames: undefined,
+        notEntities: undefined,
+        parts: undefined,
+      },
+      isUnhide: true,
+      selector: 'selector',
+    });
+  });
+
+  describe('+js()', () => {
+    it('parses script inject', () => {
+      cosmetic('foo.com##+js(script.js, argument)', {
+        ...DEFAULT_COSMETIC_FILTER,
+        domains: {
+          hostnames: h(['foo.com']),
+          entities: undefined,
+          notHostnames: undefined,
+          notEntities: undefined,
+          parts: undefined,
+        },
+        isScriptInject: true,
+        selector: 'script.js, argument',
+      });
+      cosmetic('foo.com##+js(script.js, arg1, arg2, arg3)', {
+        ...DEFAULT_COSMETIC_FILTER,
+        domains: {
+          hostnames: h(['foo.com']),
+          entities: undefined,
+          notHostnames: undefined,
+          notEntities: undefined,
+          parts: undefined,
+        },
+        isScriptInject: true,
+        selector: 'script.js, arg1, arg2, arg3',
+      });
+    });
+
+    it('rejects generic script inject', () => {
+      cosmetic('##+js(script.js, argument)', null);
+      cosmetic('~foo.com##+js(script.js, argument)', null);
+      cosmetic('~foo.*##+js(script.js, argument)', null);
+    });
+
+    it('rejects empty non-exception', () => {
+      cosmetic('##+js()', null);
+      cosmetic('foo.com##+js()', null);
+      cosmetic('~foo.com##+js()', null);
+    });
+
+    it('accept empty exception', () => {
+      cosmetic('#@#+js()', {
+        ...DEFAULT_COSMETIC_FILTER,
+        isScriptInject: true,
+        selector: '',
+        isUnhide: true,
+      });
+    });
+  });
+
+  describe('parses extended filters', () => {
+    for (const pseudo of [
+      '-abp-contains',
+      '-abp-has',
+      '-abp-properties',
+      'if',
+      'if-not',
+      'min-text-length',
+      'nth-ancestor',
+      'watch-attr',
+      'watch-attrs',
+    ]) {
+      it(`rejects unsupported: ${pseudo}`, () => {
+        cosmetic(`example.com##.cls:${pseudo}()`, null);
+      });
+    }
+
+    for (const pseudo of ['has-text']) {
+      it(`parse supported: ${pseudo}`, () => {
+        cosmetic(`example.com##.cls:${pseudo}()`, {
+          ...DEFAULT_COSMETIC_FILTER,
+          isExtended: true,
+          selector: `.cls:${pseudo}()`,
+          domains: {
+            hostnames: h(['example.com']),
+            entities: undefined,
+            notHostnames: undefined,
+            notEntities: undefined,
+            parts: undefined,
+          },
+        });
+      });
+    }
+
+    it('rejects pseudo-directive only selectors', () => {
+      cosmetic('foo.com##:remove()', null);
+      cosmetic('foo.com##:remove-attr(href)', null);
+    });
+  });
+
+  describe('parses html filtering', () => {
+    it('^script:has-text()', () => {
+      cosmetic('##^script:has-text(foo bar)', {
+        ...DEFAULT_COSMETIC_FILTER,
+        isHtmlFiltering: true,
+        selector: '^script:has-text(foo bar)',
+      });
+    });
+
+    it('with domains', () => {
+      cosmetic('foo.com##^script:has-text(foo bar)', {
+        ...DEFAULT_COSMETIC_FILTER,
+        domains: {
+          hostnames: h(['foo.com']),
+          entities: undefined,
+          notHostnames: undefined,
+          notEntities: undefined,
+          parts: undefined,
+        },
+        isHtmlFiltering: true,
+        selector: '^script:has-text(foo bar)',
+      });
+    });
+
+    describe('get selector', () => {
+      const test = (rule: string, expected: HTMLSelector | null): void => {
+        it(`${rule}`, () => {
+          const raw = `##^${rule}`;
+          const parsed = CosmeticFilter.parse(raw);
+          if (expected === null) {
+            expect(parsed).to.be.null;
+          } else {
+            expect(parsed).not.to.be.null;
+            if (parsed !== null) {
+              expect(parsed.getExtendedSelector()).to.eql(expected);
+            }
+          }
+        });
+      };
+
+      // Fake filters for tests
+      test('script:has-text()', ['script', ['']]);
+      test('script:has-text(a)', ['script', ['a']]);
+      test('script:has-text(/a/)', ['script', ['/a/']]);
+      test('script:has-text(/a/i)', ['script', ['/a/i']]);
+      test('script:has-text(/a//i)', ['script', ['/a//i']]);
+      test('script:has-text(/a/i/)', ['script', ['/a/i/']]);
+      test('script:has-text(())', ['script', ['()']]);
+      test('script:has-text(((a))', ['script', ['((a)']]);
+      test('script:has-text((((()', ['script', ['((((']]);
+
+      // Invalid filters
+      test('script:has-text(foo):)', null);
+      test('script:has-text(foo):has-text)', null);
+
+      // Real filters
+      test("script:has-text('+'\\x)", ['script', ["'+'\\x"]]);
+      test('script:has-text(("0x)', ['script', ['("0x']]);
+      test('script:has-text((window);)', ['script', ['(window);']]);
+      test('script:has-text(,window\\);)', ['script', [',window\\);']]);
+      test('script:has-text(/addLinkToCopy/i)', ['script', ['/addLinkToCopy/i']]);
+      test('script:has-text(/i10C/i)', ['script', ['/i10C/i']]);
+      test('script:has-text(/i10C/)', ['script', ['/i10C/']]);
+      test('script:has-text(3f87b0eaddd)', ['script', ['3f87b0eaddd']]);
+      test('script:has-text(ADBLOCK)', ['script', ['ADBLOCK']]);
+      test('script:has-text(Inject=!)', ['script', ['Inject=!']]);
+      test('script:has-text(String.fromCodePoint)', ['script', ['String.fromCodePoint']]);
+      test('script:has-text(a.HTMLImageElement.prototype)', [
+        'script',
+        ['a.HTMLImageElement.prototype'],
+      ]);
+      test('script:has-text(this[atob)', ['script', ['this[atob']]);
+      test('script:has-text(}(window);)', ['script', ['}(window);']]);
+      test('script:has-text(/^[wW]{1700,3000}$/):has-text(/(\\xdw){250}/)', [
+        'script',
+        ['/^[wW]{1700,3000}$/', '/(\\xdw){250}/'],
+      ]);
+
+      // Compound
+      test('script:has-text(===):has-text(/[wW]{14000}/)', ['script', ['===', '/[wW]{14000}/']]);
+    });
+  });
+
+  it('parses :style', () => {
+    cosmetic('##foo :style(display: none)', {
+      ...DEFAULT_COSMETIC_FILTER,
+      selector: 'foo ',
+      style: 'display: none',
+    });
+
+    cosmetic('##foo > bar >baz:style(display: none)', {
+      ...DEFAULT_COSMETIC_FILTER,
+      selector: 'foo > bar >baz',
+      style: 'display: none',
+    });
+
+    cosmetic('bing.com##.b_ad:style(position: absolute !important; top: -9999px !important;)', {
+      ...DEFAULT_COSMETIC_FILTER,
+      domains: {
+        hostnames: h(['bing.com']),
+        entities: undefined,
+        notHostnames: undefined,
+        notEntities: undefined,
+        parts: undefined,
+      },
+      selector: '.b_ad',
+      style: 'position: absolute !important; top: -9999px !important;',
+      isClassSelector: true,
+    });
+
+    cosmetic('foo.com,bar.de##foo > bar >baz:style(display: none)', {
+      ...DEFAULT_COSMETIC_FILTER,
+      domains: {
+        hostnames: h(['foo.com', 'bar.de']),
+        entities: undefined,
+        notHostnames: undefined,
+        notEntities: undefined,
+        parts: undefined,
+      },
+      selector: 'foo > bar >baz',
+      style: 'display: none',
+    });
+
+    cosmetic('foo.com,bar.de###foo > bar >baz:styleTYPO(display: none)', null);
+  });
+
+  // TODO
+  // it('rejects invalid selectors', () => {
+  //   const dom = new JSDOM('<!DOCTYPE html><p>Hello world</p>');
+  //   Object.defineProperty(global, 'document', { value: dom.window.document, writable: true });
+  //   expect(CosmeticFilter.parse('###.selector /invalid/')).to.be.null;
+  // });
+
+  describe('#getScript', () => {
+    const simpleScriptlet = CosmeticFilter.parse('foo.com##+js(script.js, arg1, arg2, arg3)');
+
+    it('returns undefined if script does not exist', () => {
+      expect(simpleScriptlet?.getScript(() => undefined)).to.be.undefined;
+    });
+
+    it('returns a script if one exists', () => {
+      expect(simpleScriptlet?.getScript(() => 'test')).to.equal('test');
+    });
+
+    context('with arguments', () => {
+      it('inject values', () => {
+        expect(simpleScriptlet?.getScript(() => '{{1}},{{2}},{{3}}')).to.equal('arg1,arg2,arg3');
+      });
+
+      it('escapes special characters', () => {
+        for (const character of [
+          '.',
+          '*',
+          '+',
+          '?',
+          '^',
+          '$',
+          '{',
+          '}',
+          '(',
+          ')',
+          '|',
+          '[',
+          ']',
+          '\\',
+        ]) {
+          const scriptlet = CosmeticFilter.parse(`foo.com##+js(script.js, ${character})`);
+          expect(scriptlet?.getScript(() => '{{1}}')).to.equal(`\\${character}`);
+        }
+      });
+
+      it('handles complex cases', () => {
+        for (const example of [
+          [String.raw`'\(a\)'`, String.raw`\\\(a\\\)`],
+          [String.raw`foo\*`, String.raw`foo\\\*`],
+        ]) {
+          const scriptlet = CosmeticFilter.parse(`foo.com##+js(script.js, ${example[0]})`);
+          expect(scriptlet?.getScript(() => '{{1}}')).to.equal(example[1]);
+        }
+      });
+    });
+  });
+
+  describe('#getTokens', () => {
+    function checkTokens(filter: string, tokens: Uint32Array[]): void {
+      const parsed = CosmeticFilter.parse(filter);
+      expect(parsed).not.to.be.null;
+      if (parsed !== null) {
+        expect(parsed.getTokens()).to.eql(tokens);
+      }
+    }
+
+    // TODO - entities, ~entities, hostnames, ~hostnames
+
+    it('empty tokens if none available', () => {
+      checkTokens('#@#[foo]', [new Uint32Array(0)]);
+    });
+
+    it('no tokens from selector if unhide', () => {
+      checkTokens('#@#.selector', [new Uint32Array(0)]);
+      checkTokens('#@##class', [new Uint32Array(0)]);
+      checkTokens('#@#.selector', [new Uint32Array(0)]);
+    });
+
+    describe('tokenize simple selector', () => {
+      for (const kind of ['.', '#']) {
+        for (const compound of [
+          '',
+          '[]',
+          ' > selector',
+          ' ~ selector',
+          ' + selector',
+          ' .selector',
+          ' #selector',
+          '.selector',
+          ':not(foo)',
+        ]) {
+          const filter = `##${kind}selector1${compound}`;
+          it(filter, () => {
+            checkTokens(filter, [hashStrings(['selector1'])]);
+          });
+        }
+      }
+    });
+
+    describe('tokenize href selector', () => {
+      for (const prefix of ['a', '']) {
+        it('tokenize href=', () => {
+          checkTokens(`##${prefix}[href="https://foo.com"]`, [
+            tokenize('https://foo.com', false, false),
+          ]);
+        });
+
+        it('tokenize href*=', () => {
+          checkTokens(`##${prefix}[href*="https://foo.com"]`, [
+            tokenize('https://foo.com', true, true),
+          ]);
+        });
+
+        it('tokenize href^=', () => {
+          checkTokens(`##${prefix}[href^="https://foo.com"]`, [
+            tokenize('https://foo.com', false, true),
+          ]);
+        });
+      }
+    });
+  });
+});
+
+describe('Filters list', () => {
+  it('ignores comments', () => {
+    [
+      '# ||foo.com',
+      '# ',
+      '#',
+      '!',
+      '!!',
+      '! ',
+      '! ||foo.com',
+      '[Adblock] ||foo.com',
+      '[Adblock Plus 2.0] ||foo.com',
+    ].forEach((data) => {
+      expect(parseFilters(data)).to.eql(parseFilters(''));
+    });
+  });
+
+  describe('multi-line filters', () => {
+    const lines = (content: string) =>
+      parseFilters(content, { debug: true }).networkFilters.map((f) => f.toString());
+
+    it('single filter on two lines', () => {
+      expect(lines(['*$3p,script, \\', '    domain=x.com|y.com'].join('\n'))).to.eql([
+        '*$3p,script,domain=x.com|y.com',
+      ]);
+    });
+
+    it('single filter on many lines', () => {
+      expect(
+        lines(['*$ \\', '    3p, \\', '    script, \\', '    domain=x.com|y.com'].join('\n')),
+      ).to.eql(['*$3p,script,domain=x.com|y.com']);
+    });
+
+    it('handle leading and trailing spaces', () => {
+      expect(
+        lines(
+          [' \t*$ \\', '    3p, \\', '    script, \\', '    domain=x.com|y.com \t '].join('\n'),
+        ),
+      ).to.eql(['*$3p,script,domain=x.com|y.com']);
+    });
+
+    it('mixed with normal filters and comments', () => {
+      expect(
+        lines(
+          [
+            '||foo.com^',
+            ' \t*$ \\',
+            '    3p, \\',
+            '    script, \\',
+            '    domain=x.com|y.com \t ',
+            '! comment',
+            '||bar.com^',
+            '|| \\',
+            '    baz. \\',
+            '    com^',
+          ].join('\n'),
+        ),
+      ).to.eql(['||foo.com^', '*$3p,script,domain=x.com|y.com', '||bar.com^', '||baz.com^']);
+    });
+  });
+});
+
+describe('Scriptlet argument parsing', () => {
+  describe('basic argument splitting', () => {
+    it('parses empty argument list', () => {
+      const filter = CosmeticFilter.parse('foo.com#@#+js()')!;
+      expect(filter).to.not.be.null;
+      expect(filter.isScriptInject()).to.be.true;
+      expect(filter.parseScript()).to.be.undefined;
+    });
+
+    it('parses name without args', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(script-name)')?.parseScript()).to.eql({
+        name: 'script-name',
+        args: [],
+      });
+    });
+
+    it('splits arguments at unescaped commas', () => {
+      for (const [scriptlet, expected] of [
+        ['acs, $, adb', { name: 'acs', args: ['$', 'adb'] }],
+        [
+          'abort-current-script, document.createElement, break;case $.',
+          { name: 'abort-current-script', args: ['document.createElement', 'break;case $.'] },
+        ],
+        ['acs, atob, -0x1', { name: 'acs', args: ['atob', '-0x1'] }],
+        ["acs, Date, ='\\x", { name: 'acs', args: ['Date', "='\\x"] }],
+        [
+          'acs, document.getElementById, showModal, /^data:text\\/javascript/',
+          {
+            name: 'acs',
+            args: ['document.getElementById', 'showModal', '/^data:text\\/javascript/'],
+          },
+        ],
+        ['aeld, mousedown, !!{});', { name: 'aeld', args: ['mousedown', '!!{});'] }],
+      ] as const) {
+        expect(
+          CosmeticFilter.parse(`foo.com##+js(${scriptlet})`)?.parseScript(),
+          scriptlet,
+        ).to.eql(expected);
+      }
+    });
+
+    it('preserves commas inside quotes', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(a, "value,another")')?.parseScript()).to.eql({
+        name: 'a',
+        args: ['value,another'],
+      });
+      expect(CosmeticFilter.parse("foo.com##+js(a, 'value,another')")?.parseScript()).to.eql({
+        name: 'a',
+        args: ['value,another'],
+      });
+      expect(CosmeticFilter.parse('foo.com##+js(a, `value,another`)')?.parseScript()).to.eql({
+        name: 'a',
+        args: ['value,another'],
+      });
+    });
+
+    it('preserves commas inside regexps', () => {
+      expect(
+        CosmeticFilter.parse('foo.com##+js(acs, $, /.fadeIn|.show(.?)/)')?.parseScript(),
+      ).to.eql({
+        name: 'acs',
+        args: ['$', '/.fadeIn|.show(.?)/'],
+      });
+      expect(
+        CosmeticFilter.parse(
+          'foo.com##+js(acis, document.createElement, /break;case $.|popunder/)',
+        )?.parseScript(),
+      ).to.eql({
+        name: 'acis',
+        args: ['document.createElement', '/break;case $.|popunder/'],
+      });
+      expect(
+        CosmeticFilter.parse(
+          `foo.com##+js(acs, document.getElementById, /\\$\\('body'\\)|\\$\\("body"\\)/)`,
+        )?.parseScript(),
+      ).to.eql({
+        name: 'acs',
+        args: ['document.getElementById', `/\\$\\('body'\\)|\\$\\("body"\\)/`],
+      });
+    });
+
+    it('handles empty arguments', () => {
+      expect(
+        CosmeticFilter.parse('foo.com##+js(script-name,, , foo,   ,     bar)')?.parseScript(),
+      ).to.eql({
+        name: 'script-name',
+        args: ['', '', 'foo', '', 'bar'],
+      });
+    });
+  });
+
+  describe('escaped comma handling', () => {
+    it('treats escaped commas as part of argument', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(script-name, foo \\,bar)')?.parseScript()).to.eql({
+        name: 'script-name',
+        args: ['foo ,bar'],
+      });
+    });
+
+    it('converts escaped commas to regular commas in output', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(a, arg1\\,arg2)')?.parseScript()).to.eql({
+        name: 'a',
+        args: ['arg1,arg2'],
+      });
+    });
+
+    it('handles multiple escaped commas in single argument', () => {
+      expect(
+        CosmeticFilter.parse('foo.com##+js(script-name, arg1\\,arg2\\,arg3, arg4)')?.parseScript(),
+      ).to.eql({
+        name: 'script-name',
+        args: ['arg1,arg2,arg3', 'arg4'],
+      });
+    });
+  });
+
+  describe('quote handling', () => {
+    it('removes wrapping quotes from arguments', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(script-name, "a")')?.parseScript()).to.eql({
+        name: 'script-name',
+        args: ['a'],
+      });
+      expect(CosmeticFilter.parse("foo.com##+js(script-name, 'a')")?.parseScript()).to.eql({
+        name: 'script-name',
+        args: ['a'],
+      });
+      expect(CosmeticFilter.parse('foo.com##+js(script-name, `a`)')?.parseScript()).to.eql({
+        name: 'script-name',
+        args: ['a'],
+      });
+    });
+
+    it('removes nested quotes when properly wrapped', () => {
+      expect(
+        CosmeticFilter.parse(`foo.com##+js(acs, decodeURIComponent, "'shift'")`)?.parseScript(),
+      ).to.eql({
+        name: 'acs',
+        args: ['decodeURIComponent', `'shift'`],
+      });
+      expect(CosmeticFilter.parse(`foo.com##+js(a, "'value',")`)?.parseScript()).to.eql({
+        name: 'a',
+        args: [`'value',`],
+      });
+    });
+
+    it('handles mismatched quotes', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(a, "value)')?.parseScript()).to.eql({
+        name: 'a',
+        args: ['"value'],
+      });
+      expect(CosmeticFilter.parse("foo.com##+js(a, 'value)")?.parseScript()).to.eql({
+        name: 'a',
+        args: ["'value"],
+      });
+    });
+
+    it('handles escaped quotes inside quoted strings', () => {
+      expect(CosmeticFilter.parse(`foo.com##+js(a, "va\\"lue")`)?.parseScript()).to.eql({
+        name: 'a',
+        args: ['va"lue'],
+      });
+      expect(CosmeticFilter.parse(`foo.com##+js(a, 'va\\'lue')`)?.parseScript()).to.eql({
+        name: 'a',
+        args: ["va'lue"],
+      });
+      expect(CosmeticFilter.parse('foo.com##+js(a, `va\\`lue`)')?.parseScript()).to.eql({
+        name: 'a',
+        args: ['va`lue'],
+      });
+    });
+  });
+
+  describe('object literal arguments', () => {
+    describe('quoted objects (correct syntax - commas preserved)', () => {
+      it('requires quotes for object literals with multiple keys', () => {
+        expect(
+          CosmeticFilter.parse('foo.com##+js(script-name, "{foo: 1, bar: 2}")')?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: ['{foo: 1, bar: 2}'],
+        });
+      });
+
+      it('works with single quotes', () => {
+        expect(
+          CosmeticFilter.parse("foo.com##+js(script-name, '{foo: 1, bar: 2}')")?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: ['{foo: 1, bar: 2}'],
+        });
+      });
+
+      it('works with backticks', () => {
+        expect(
+          CosmeticFilter.parse('foo.com##+js(script-name, `{foo: 1, bar: 2}`)')?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: ['{foo: 1, bar: 2}'],
+        });
+      });
+
+      it('handles multiple arguments with quoted objects', () => {
+        expect(
+          CosmeticFilter.parse(
+            'foo.com##+js(script-name, "{foo: 1, bar: 2}", arg2, "{baz: 3}")',
+          )?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: ['{foo: 1, bar: 2}', 'arg2', '{baz: 3}'],
+        });
+      });
+
+      it('handles nested objects in quoted string', () => {
+        expect(
+          CosmeticFilter.parse(
+            'foo.com##+js(script-name, "{foo: {a: 1, b: 2}, bar: 3}")',
+          )?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: ['{foo: {a: 1, b: 2}, bar: 3}'],
+        });
+      });
+
+      it('handles complex real-world object with quoted syntax', () => {
+        expect(
+          CosmeticFilter.parse(
+            `foo.com##+js(aeld, '{ "type": "click", "pattern": "popMagic", "runAt": "idle" }')`,
+          )?.parseScript(),
+        ).to.eql({
+          name: 'aeld',
+          args: ['{ "type": "click", "pattern": "popMagic", "runAt": "idle" }'],
+        });
+      });
+
+      it('preserves escaped commas in object literals (even when quoted)', () => {
+        // Object literals preserve escaped commas (detected by starting with '{')
+        expect(
+          CosmeticFilter.parse(
+            String.raw`foo.com##+js(script-name, "{foo: 1\, bar: 2}")`,
+          )?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: [String.raw`{foo: 1\, bar: 2}`],
+        });
+      });
+    });
+
+    describe('unquoted objects (incorrect syntax - demonstrates splitting behavior)', () => {
+      it('empty object stays as one argument', () => {
+        expect(CosmeticFilter.parse('foo.com##+js(script-name, {})')?.parseScript()).to.eql({
+          name: 'script-name',
+          args: ['{}'],
+        });
+      });
+
+      it('single key object stays as one argument', () => {
+        expect(CosmeticFilter.parse('foo.com##+js(script-name, {foo: 42})')?.parseScript()).to.eql(
+          {
+            name: 'script-name',
+            args: ['{foo: 42}'],
+          },
+        );
+      });
+
+      it('splits at commas in unquoted object with multiple keys', () => {
+        expect(
+          CosmeticFilter.parse('foo.com##+js(script-name, {foo: 1, bar: 2})')?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: ['{foo: 1', 'bar: 2}'],
+        });
+      });
+
+      it('splits at commas in unquoted object with quoted values', () => {
+        expect(
+          CosmeticFilter.parse(
+            'foo.com##+js(aeld, { "type": "click", "pattern": "popMagic", "runAt": "idle" })',
+          )?.parseScript(),
+        ).to.eql({
+          name: 'aeld',
+          args: ['{ "type": "click"', '"pattern": "popMagic"', '"runAt": "idle" }'],
+        });
+      });
+
+      it('splits at all commas in nested unquoted objects', () => {
+        expect(
+          CosmeticFilter.parse(
+            'foo.com##+js(script-name, {foo: 1, bar: 2, baz: {a: 1, b: 2}}, arg2,)',
+          )?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: ['{foo: 1', 'bar: 2', 'baz: {a: 1', 'b: 2}}', 'arg2', ''],
+        });
+      });
+
+      it('splits at commas but preserves escaped braces', () => {
+        expect(
+          CosmeticFilter.parse(
+            'foo.com##+js(script-name, \\{foo: 1, bar: 2\\}, {baz: {a: 1, b: 2}})',
+          )?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: ['\\{foo: 1', 'bar: 2\\}', '{baz: {a: 1', 'b: 2}}'],
+        });
+      });
+
+      it('splits at commas with quotes inside unquoted objects', () => {
+        expect(
+          CosmeticFilter.parse(`foo.com##+js(script-name, {foo: "}", bar: '{'})`)?.parseScript(),
+        ).to.eql({
+          name: 'script-name',
+          args: [`{foo: "}"`, `bar: '{'}`],
+        });
+      });
+    });
+  });
+
+  describe('combined escaping scenarios', () => {
+    it('handles escaped commas with quoted strings', () => {
+      expect(
+        CosmeticFilter.parse(
+          `www.youtube.com##+js(trusted-replace-outbound-text, JSON.stringify, "params":"yAEB, condition, /("contentPlaybackContext":{".*\\,"params":"|"params":".*"contentPlaybackContext":{")/)`,
+        )?.parseScript(),
+      ).to.eql({
+        name: 'trusted-replace-outbound-text',
+        args: [
+          'JSON.stringify',
+          '"params":"yAEB',
+          'condition',
+          '/("contentPlaybackContext":{".*,"params":"|"params":".*"contentPlaybackContext":{")/',
+        ],
+      });
+    });
+
+    it('handles complex real-world examples', () => {
+      expect(
+        CosmeticFilter.parse(
+          String.raw`www.youtube.com##+js(trusted-replace-outbound-text, JSON.stringify, {"contentPlaybackContext", {"adPlaybackContext":{"pyv":true}\,"contentPlaybackContext", condition, currentUrl":"/watch)`,
+        )?.parseScript(),
+      ).to.eql({
+        name: 'trusted-replace-outbound-text',
+        args: [
+          'JSON.stringify',
+          '{"contentPlaybackContext"',
+          String.raw`{"adPlaybackContext":{"pyv":true}\,"contentPlaybackContext"`,
+          'condition',
+          'currentUrl":"/watch',
+        ],
+      });
+    });
+  });
+
+  describe('edge cases and comprehensive quote tests', () => {
+    context('quoting variations', () => {
+      for (const [filter, expected] of [
+        ['foo.com##+js(a, "value")', ['value']],
+        ['foo.com##+js(a, "value)', ['"value']],
+        [`foo.com##+js(a, 'value')`, ['value']],
+        [`foo.com##+js(a, 'value)`, ["'value"]],
+        ['foo.com##+js(a, `value`)', ['value']],
+        ['foo.com##+js(a, `value)', ['`value']],
+        ['foo.com##+js(a, "value,")', ['value,']],
+        [`foo.com##+js(a, 'value,')`, ['value,']],
+        ['foo.com##+js(a, `value,`)', ['value,']],
+        [`foo.com##+js(a, ",value")`, [',value']],
+        [`foo.com##+js(a, ',value')`, [',value']],
+        ['foo.com##+js(a, `,value`)', [',value']],
+        [`foo.com##+js(a, "value"")`, ['"value""']],
+        [`foo.com##+js(a, 'value'')`, [`'value''`]],
+        ['foo.com##+js(a, `value``)', ['`value``']],
+        [`foo.com##+js(a, "'value'")`, [`'value'`]],
+        [`foo.com##+js(a, '"value"')`, [`"value"`]],
+        ["foo.com##+js(a, '`value`')", ['`value`']],
+        ['foo.com##+js(a, "`value`")', ['`value`']],
+        [`foo.com##+js(a, "value",")`, [`value`, `"`]],
+        [`foo.com##+js(a, 'value',')`, [`value`, `'`]],
+        ['foo.com##+js(a, `value`,`)', [`value`, '`']],
+        [`foo.com##+js(a, ""value"")`, [`""value""`]],
+        [`foo.com##+js(a, ''value'')`, [`''value''`]],
+        ['foo.com##+js(a, ``value``)', ['``value``']],
+        [`foo.com##+js(a, \\"value")`, [`\\"value"`]],
+        [`foo.com##+js(a, \\'value')`, [`\\'value'`]],
+        ['foo.com##+js(a, \\`value`)', ['\\`value`']],
+        [`foo.com##+js(a, "value\\")`, [`"value\\"`]],
+        [`foo.com##+js(a, 'value\\')`, [`'value\\'`]],
+        ['foo.com##+js(a, `value\\`)', ['`value\\`']],
+        // TODO: backslash is not removed in case not required
+        // > example.com##+js(rpnt, #text, Example Domain, "'value'\,'another'", condition, Example, stay, 1)
+        // [`foo.com##+js(a, "va\\,lue")`, [`va\\,lue`]],
+        // [`foo.com##+js(a, 'va\\,lue')`, [`va\\,lue`]],
+        // ['foo.com##+js(a, `va\\,lue`)', ['va\\,lue']],
+        [`foo.com##+js(a, "va\\"lue")`, [`va"lue`]],
+        [`foo.com##+js(a, 'va\\'lue')`, [`va'lue`]],
+        ['foo.com##+js(a, `va\\`lue`)', ['va`lue']],
+        [`foo.com##+js(a, 'value'\\,')`, [`'value','`]],
+        [`foo.com##+js(a, 'value'\\,')`, [`'value','`]],
+        ['foo.com##+js(a, `value`\\,`)', ['`value`,`']],
+        [`foo.com##+js(a, "value,another")`, [`value,another`]],
+        [`foo.com##+js(a, 'value,another')`, [`value,another`]],
+        ['foo.com##+js(a, `value,another`)', [`value,another`]],
+        [`foo.com##+js(a, "value""another")`, [`"value""another"`]],
+        [`foo.com##+js(a, 'value''another')`, [`'value''another'`]],
+        ['foo.com##+js(a, `value``another`)', ['`value``another`']],
+        [`foo.com##+js(a, "value"another")`, [`"value"another"`]],
+        [`foo.com##+js(a, 'value'another')`, [`'value'another'`]],
+        ['foo.com##+js(a, `value`another`)', ['`value`another`']],
+        [`foo.com##+js(a, "'value','another'")`, [`'value','another'`]],
+        [`foo.com##+js(a, '"value","another"')`, [`"value","another"`]],
+        ['foo.com##+js(a, `"value","another"`)', [`"value","another"`]],
+        ["foo.com##+js(a, `'value','another'`)", [`'value','another'`]],
+        [`foo.com##+js(a, "value\\",another")`, [`value",another`]],
+        [`foo.com##+js(a, 'value\\',another')`, [`value',another`]],
+        ['foo.com##+js(a, `value\\`,another`)', ['value`,another']],
+        [
+          `www.youtube.com##+js(trusted-replace-outbound-text, JSON.stringify, "params":"yAEB, condition, /("contentPlaybackContext":{".*\\,"params":"|"params":".*"contentPlaybackContext":{")/)`,
+          [
+            `JSON.stringify`,
+            `"params":"yAEB`,
+            `condition`,
+            `/("contentPlaybackContext":{".*,"params":"|"params":".*"contentPlaybackContext":{")/`,
+          ],
+        ],
+        [
+          `www.youtube.com##+js(trusted-replace-outbound-text, JSON.stringify, "params":", condition, /("contentPlaybackContext":{".*\\,"params":"|"params":".*"contentPlaybackContext":{")/)`,
+          [
+            `JSON.stringify`,
+            `"params":"`,
+            `condition`,
+            `/("contentPlaybackContext":{".*,"params":"|"params":".*"contentPlaybackContext":{")/`,
+          ],
+        ],
+        [
+          String.raw`www.youtube.com##+js(trusted-replace-outbound-text, JSON.stringify, {"contentPlaybackContext", {"adPlaybackContext":{"pyv":true}\,"contentPlaybackContext", condition, currentUrl":"/watch)`,
+          [
+            `JSON.stringify`,
+            `{"contentPlaybackContext"`,
+            String.raw`{"adPlaybackContext":{"pyv":true}\,"contentPlaybackContext"`,
+            `condition`,
+            `currentUrl":"/watch`,
+          ],
+        ],
+        [
+          String.raw`www.youtube.com##+js(trusted-replace-outbound-text, JSON.stringify, {"contentPlaybackContext", {"adPlaybackContext":{"pyv":true}\\,"contentPlaybackContext", condition, currentUrl":"/watch))`,
+          [
+            `JSON.stringify`,
+            `{"contentPlaybackContext"`,
+            String.raw`{"adPlaybackContext":{"pyv":true}\\`,
+            `contentPlaybackContext`,
+            `condition`,
+            `currentUrl":"/watch)`,
+          ],
+        ],
+        [
+          `www.youtube.com##+js(trusted-replace-node-text, script, (function serverContract(), \`(()=>{if("YOUTUBE_PREMIUM_LOGO"===ytInitialData?.topbar?.desktopTopbarRenderer?.logo?.topbarLogoRenderer?.iconImage?.iconType\\|\\|location.href.startsWith("https://www.youtube.com/tv#/")\\|\\|location.href.startsWith("https://www.youtube.com/embed/"))return;document.addEventListener("DOMContentLoaded",(function(){const t=()=>{const t=document.getElementById("movie_player");if(!t)return;if(!t.getStatsForNerds?.()?.debug_info?.startsWith?.("SSAP, AD"))return;const e=t.getProgressState?.();e&&e.duration>0&&(e.loaded<e.duration\\|\\|e.duration-e.current>1)&&t.seekTo?.(e.duration)};t(),new MutationObserver((()=>{t()})).observe(document,{childList:!0,subtree:!0})}));const t={apply:(t,e,o)=>{const n=o[0];return"function"==typeof n&&n.toString().includes("onAbnormalityDetected")&&(o[0]=function(){}),Reflect.apply(t,e,o)}};window.Promise.prototype.then=new Proxy(window.Promise.prototype.then,t);const e={construct:(t,e,o)=>{const n=e[0],r=e[1]?.body;return n?.includes("youtubei")&&r?.includes('"contentPlaybackContext":{')&&!r?.includes("youtube.com/shorts/")&&(r.includes('"params":"')?e[1].body=r.replace('"params":"','"params":"yAEB'):e[1].body=r.replace('"contentCheckOk":false','"contentCheckOk":false,"params":"yAEB"')),Reflect.construct(t,e,o)}};window.Request=new Proxy(window.Request,e)})();(function serverContract()\`, sedCount, 1)`,
+          [
+            'script',
+            '(function serverContract()',
+            `(()=>{if("YOUTUBE_PREMIUM_LOGO"===ytInitialData?.topbar?.desktopTopbarRenderer?.logo?.topbarLogoRenderer?.iconImage?.iconType\\|\\|location.href.startsWith("https://www.youtube.com/tv#/")\\|\\|location.href.startsWith("https://www.youtube.com/embed/"))return;document.addEventListener("DOMContentLoaded",(function(){const t=()=>{const t=document.getElementById("movie_player");if(!t)return;if(!t.getStatsForNerds?.()?.debug_info?.startsWith?.("SSAP, AD"))return;const e=t.getProgressState?.();e&&e.duration>0&&(e.loaded<e.duration\\|\\|e.duration-e.current>1)&&t.seekTo?.(e.duration)};t(),new MutationObserver((()=>{t()})).observe(document,{childList:!0,subtree:!0})}));const t={apply:(t,e,o)=>{const n=o[0];return"function"==typeof n&&n.toString().includes("onAbnormalityDetected")&&(o[0]=function(){}),Reflect.apply(t,e,o)}};window.Promise.prototype.then=new Proxy(window.Promise.prototype.then,t);const e={construct:(t,e,o)=>{const n=e[0],r=e[1]?.body;return n?.includes("youtubei")&&r?.includes('"contentPlaybackContext":{')&&!r?.includes("youtube.com/shorts/")&&(r.includes('"params":"')?e[1].body=r.replace('"params":"','"params":"yAEB'):e[1].body=r.replace('"contentCheckOk":false','"contentCheckOk":false,"params":"yAEB"')),Reflect.construct(t,e,o)}};window.Request=new Proxy(window.Request,e)})();(function serverContract()`,
+            'sedCount',
+            '1',
+          ],
+        ],
+      ] satisfies [string, string[]][]) {
+        it(filter, () => {
+          expect(CosmeticFilter.parse(filter)!.parseScript()!.args).to.eql(expected);
+        });
+      }
+    });
+  });
+
+  describe('handles regexp arguments', () => {
+    it('empty', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(script-name, //)')?.parseScript()).to.eql({
+        name: 'script-name',
+        args: ['//'],
+      });
+    });
+
+    it('simple', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(script-name, /foo/)')?.parseScript()).to.eql({
+        name: 'script-name',
+        args: ['/foo/'],
+      });
+    });
+
+    it('complex', () => {
+      for (const [scriptlet, expected] of [
+        [
+          'script-name, {x, y',
+          {
+            name: 'script-name',
+            args: ['{x', 'y'],
+          },
+        ],
+        [
+          'script-name, "x, y',
+          {
+            name: 'script-name',
+            args: ['"x', 'y'],
+          },
+        ],
+        [
+          "script-name, 'x, y",
+          {
+            name: 'script-name',
+            args: ["'x", 'y'],
+          },
+        ],
+        [
+          'script-name, /x, y',
+          {
+            name: 'script-name',
+            args: ['/x', 'y'],
+          },
+        ],
+        [
+          'xml-prune,a/b,///,,c',
+          {
+            name: 'xml-prune',
+            args: ['a/b', '///', '', 'c'],
+          },
+        ],
+        [
+          `xml-prune, xpath(//*[name()="MPD"]/@mediaPresentationDuration | //*[name()="Period"][.//*[name()="BaseURL" and contains(text()\\,'/ads-')]] | //*[name()="Period"]/@start), Period[id^="Ad"i], .mpd`,
+          {
+            name: 'xml-prune',
+            args: [
+              `xpath(//*[name()="MPD"]/@mediaPresentationDuration | //*[name()="Period"][.//*[name()="BaseURL" and contains(text(),'/ads-')]] | //*[name()="Period"]/@start)`,
+              'Period[id^="Ad"i]',
+              '.mpd',
+            ],
+          },
+        ],
+        [
+          'xml-prune,a/b,,c',
+          {
+            name: 'xml-prune',
+            args: ['a/b', '', 'c'],
+          },
+        ],
+        [
+          'xml-prune, xpath(//*[name()="Period"][.//*[@value="Ad"]] | //*[name()="Period"]/@start), [value="Ad"], .mpd',
+          {
+            name: 'xml-prune',
+            args: [
+              'xpath(//*[name()="Period"][.//*[@value="Ad"]] | //*[name()="Period"]/@start)',
+              '[value="Ad"]',
+              '.mpd',
+            ],
+          },
+        ],
+        [
+          'acs, Math, /\\}\\s*\\(.*?\\b(self|this|window)\\b.*?\\)/',
+          {
+            name: 'acs',
+            args: ['Math', '/\\}\\s*\\(.*?\\b(self|this|window)\\b.*?\\)/'],
+          },
+        ],
+        [
+          'aeld, click, /event_callback=function\\(\\){window\\.location=t\\.getAttribute\\("href"\\)/',
+          {
+            name: 'aeld',
+            args: [
+              'click',
+              '/event_callback=function\\(\\){window\\.location=t\\.getAttribute\\("href"\\)/',
+            ],
+          },
+        ],
+        [
+          'm3u-prune, /\\,ad\n.+?(?=#UPLYNK-SEGMENT)/gm, .m3u8',
+          {
+            name: 'm3u-prune',
+            args: ['/,ad\n.+?(?=#UPLYNK-SEGMENT)/gm', '.m3u8'],
+          },
+        ],
+        // Also works without escaping the coma
+        [
+          'm3u-prune, /,ad\n.+?(?=#UPLYNK-SEGMENT)/gm, .m3u8',
+          {
+            name: 'm3u-prune',
+            args: ['/,ad\n.+?(?=#UPLYNK-SEGMENT)/gm', '.m3u8'],
+          },
+        ],
+      ] as const) {
+        expect(
+          CosmeticFilter.parse(`foo.com##+js(${scriptlet})`)?.parseScript(),
+          scriptlet,
+        ).to.eql(expected);
+      }
+    });
+
+    it('contains coma', () => {
+      expect(CosmeticFilter.parse('foo.com##+js(script-name, /foo,bar/)')?.parseScript()).to.eql({
+        name: 'script-name',
+        args: ['/foo,bar/'],
+      });
+    });
+
+    it('escaping', () => {
+      expect(
+        CosmeticFilter.parse('foo.com##+js(script-name, \\/foo, bar\\/)')?.parseScript(),
+      ).to.eql({
+        name: 'script-name',
+        args: ['\\/foo', 'bar\\/'],
+      });
+    });
+  });
+
+  it('complex patterns', () => {
+    for (const [scriptlet, expected] of [
+      [
+        'ra, oncontextmenu|onselectstart|ondragstart|oncut|oncopy, div.contentContainer\\, div.content, stay',
+        {
+          name: 'ra',
+          args: [
+            'oncontextmenu|onselectstart|ondragstart|oncut|oncopy',
+            'div.contentContainer, div.content',
+            'stay',
+          ],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"adPlacements.*?\\"\\}\\}\\}\\]\\,/, , player?key=',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: ['/\\"adPlacements.*?\\"\\}\\}\\}\\],/', '', 'player?key='],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"adPlacements.*?true.*?\\"\\}\\}\\}\\]\\,/, , url:player?key= method:/post/i',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: [
+            '/\\"adPlacements.*?true.*?\\"\\}\\}\\}\\],/',
+            '',
+            'url:player?key= method:/post/i',
+          ],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"adPlacements.*?\\"\\}\\}\\}\\]\\,/, , url:player?key= method:/post/i bodyUsed:true',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: [
+            '/\\"adPlacements.*?\\"\\}\\}\\}\\],/',
+            '',
+            'url:player?key= method:/post/i bodyUsed:true',
+          ],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"adSlots.*?\\}\\]\\}\\}\\]\\,/, , player?key=',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: ['/\\"adSlots.*?\\}\\]\\}\\}\\],/', '', 'player?key='],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"adSlots.*?true.*?\\}\\]\\}\\}\\]\\,/, , url:player?key= method:/post/i',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: ['/\\"adSlots.*?true.*?\\}\\]\\}\\}\\],/', '', 'url:player?key= method:/post/i'],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"adSlots.*?\\}\\]\\}\\}\\]\\,/, , url:player?key= method:/post/i',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: ['/\\"adSlots.*?\\}\\]\\}\\}\\],/', '', 'url:player?key= method:/post/i'],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"adSlots.*?\\}\\]\\}\\}\\]\\,/, , url:player?key= method:/post/i bodyUsed:true',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: [
+            '/\\"adSlots.*?\\}\\]\\}\\}\\],/',
+            '',
+            'url:player?key= method:/post/i bodyUsed:true',
+          ],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"playerAds.*?\\}\\}\\]\\,/, , player?key=',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: ['/\\"playerAds.*?\\}\\}\\],/', '', 'player?key='],
+        },
+      ],
+      [
+        'trusted-replace-fetch-response, /\\"playerAds.*?true.*?\\}\\}\\]\\,/, , url:player?key= method:/post/i',
+        {
+          name: 'trusted-replace-fetch-response',
+          args: ['/\\"playerAds.*?true.*?\\}\\}\\],/', '', 'url:player?key= method:/post/i'],
+        },
+      ],
+    ] as const) {
+      expect(CosmeticFilter.parse(`foo.com##+js(${scriptlet})`)?.parseScript(), scriptlet).to.eql(
+        expected,
+      );
+    }
+  });
+
+  it('unescapes escaped scriptlets', () => {
+    for (const [scriptlet, expected] of [
+      [
+        String.raw`script-name, \u005C(a\u005C)`,
+        {
+          name: 'script-name',
+          args: [String.raw`\(a\)`],
+        },
+      ],
+      [
+        String.raw`script-name, {"a":1\u002C"b":2}`,
+        {
+          name: 'script-name',
+          args: [String.raw`{"a":1,"b":2}`],
+        },
+      ],
+    ] as const) {
+      expect(CosmeticFilter.parse(`foo.com##+js(${scriptlet})`)?.parseScript(), scriptlet).to.eql(
+        expected,
+      );
+    }
+  });
+});

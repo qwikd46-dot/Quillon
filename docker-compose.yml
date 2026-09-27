@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  piped:
+    image: ghcr.io/team-piped/piped:latest
+    container_name: bfsb-piped
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"  # Only bind to localhost
+    environment:
+      # Disable public API - we only use it internally
+      - INSTANCE_NAME=BFSB Local
+      - DEFAULT_INSTANCE=http://localhost:8080
+      - TRUSTED_PROXIES=127.0.0.1
+      # No external database needed - uses SQLite by default
+      - DB_TYPE=sqlite
+      - SQLITE_PATH=/data/piped.db
+      # SponsorBlock integration
+      - SPONSORBLOCK_API=https://sponsor.ajay.app
+      # Disable some features we don't need
+      - DISABLE_ANNOTATIONS=false
+      - DISABLE_COMMENTS=false
+    volumes:
+      - piped-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/v1/instance"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  piped-data:

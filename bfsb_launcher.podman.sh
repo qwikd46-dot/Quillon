@@ -1,9 +1,8 @@
 #!/bin/bash
-# BFSB Launcher - wrapper script for desktop entry
+# BFSB Launcher (Podman) - starts local SearXNG on 127.0.0.1:8888, runs BFSB UI on 127.0.0.1:8889, stops SearXNG on exit.
+set -u
+BFSB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-# Platform: prefer Wayland (we're on Hyprland), fall back to X11 via XWayland.
-# On pure X11 the env vars are already set correctly; on Wayland we want
-# the Wayland platform plugin to avoid the silent-fail when XCB has no DISPLAY.
 if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -z "${BFSB_FORCE_XCB:-}" ]; then
     unset QT_QPA_PLATFORM
     unset QT_WEBENGINE_DISABLE_WAYLAND
@@ -11,70 +10,22 @@ else
     export QT_QPA_PLATFORM=xcb
     export QT_WEBENGINE_DISABLE_WAYLAND=1
 fi
-
-# Use software rendering backend to avoid GPU/compositor black screen
 export QT_QUICK_BACKEND=software
 export QT_WEBENGINE_DISABLE_GPU=1
-
-# Chromium flags: disable GPU compositing, sandbox, dev-shm
-# MUST be a single space-separated string — Qt reads only the first array element otherwise.
 export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-gpu-compositing --disable-webgl --disable-webgl2 --disable-3d-apis --disable-breakpad --disable-extensions --disable-plugins --disable-default-apps --disable-sync --disable-background-networking --disable-background-timer-throttling --disable-renderer-backgrounding --disable-features=VizDisplayCompositor,UseSkiaRenderer,CanvasOopRasterization --num-raster-threads=1"
-
-# ---------------------------------------------------------------------------
-# QtWebEngineProcess / resources location.
-# Do NOT hardcode system paths: this machine uses pip-bundled PyQt6 (which
-# ships its own Qt under ~/.local/lib/python*/site-packages/PyQt6/Qt6),
-# and there is no /usr/lib/qt6 or /usr/share/qt6/resources. Pointing
-# QTWEBENGINEPROCESS_PATH at a nonexistent file makes Qt abort at startup.
-# Auto-detect: pip bundle first, then Fedora/Debian system candidates.
-# If nothing is found, leave unset so Qt auto-locates relative to the libs.
-# ---------------------------------------------------------------------------
 unset QTWEBENGINEPROCESS_PATH
 unset QTWEBENGINE_RESOURCES_PATH
-_PIP_WEBENGINE_PROC="$(python3 -c "import os, PyQt6; print(os.path.join(os.path.dirname(PyQt6.__file__), 'Qt6', 'libexec', 'QtWebEngineProcess'))" 2>/dev/null)"
-_PIP_WEBENGINE_RES="$(python3 -c "import os, PyQt6; print(os.path.join(os.path.dirname(PyQt6.__file__), 'Qt6', 'resources'))" 2>/dev/null)"
-for _cand in "$_PIP_WEBENGINE_PROC" \
-    /usr/libexec/qt6/QtWebEngineProcess \
-    /usr/lib64/qt6/libexec/QtWebEngineProcess \
-    /usr/lib/qt6/QtWebEngineProcess; do
-    if [ -n "$_cand" ] && [ -x "$_cand" ]; then
-        export QTWEBENGINEPROCESS_PATH="$_cand"
-        break
-    fi
-done
-for _cand in "$_PIP_WEBENGINE_RES" \
-    /usr/share/qt6/resources \
-    /usr/lib64/qt6/resources; do
-    if [ -n "$_cand" ] && [ -d "$_cand" ]; then
-        export QTWEBENGINE_RESOURCES_PATH="$_cand"
-        break
-    fi
-done
-unset _PIP_WEBENGINE_PROC _PIP_WEBENGINE_RES _cand
-if [ -n "${QTWEBENGINEPROCESS_PATH:-}" ]; then
-    echo "[BFSB] QtWebEngineProcess: $QTWEBENGINEPROCESS_PATH"
-else
-    echo "[BFSB] QtWebEngineProcess: <auto (bundled Qt)>"
-fi
-
-# ---------------------------------------------------------------------------
-# SearXNG lifecycle (Podman rootless) — start on BFSB launch, stop on exit.
-# Bound to 127.0.0.1:8888, only reachable from this machine.
-# BFSB's own UI server lives on 127.0.0.1:8889 (see bfsb/core/server.py).
-# ---------------------------------------------------------------------------
-BFSB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BFSB_RUNTIME_DIR="$HOME/.bfsb"
 mkdir -p "$BFSB_RUNTIME_DIR"
 BFSB_CHECKUP="$BFSB_DIR/bfsb_checkup.sh"
 if [ -x "$BFSB_CHECKUP" ]; then
     "$BFSB_CHECKUP" --replace || true
 fi
-
 SEARXNG_IMAGE="docker.io/searxng/searxng:latest"
 SEARXNG_NAME="bfsb-searxng"
 SEARXNG_LOG="$BFSB_RUNTIME_DIR/searxng.log"
 SEARXNG_SETTINGS_DIR="$BFSB_RUNTIME_DIR/searxng"
-SEARXNG_READY_TIMEOUT=60  # seconds (first pull can be slow)
+SEARXNG_READY_TIMEOUT=60
 BFSB_LAUNCHER_ID="$$-$(date +%s)-$RANDOM"
 BFSB_LAUNCHER_PID_FILE="$BFSB_RUNTIME_DIR/launcher.pid"
 BFSB_BROWSER_PID_FILE="$BFSB_RUNTIME_DIR/browser.pid"
@@ -83,7 +34,6 @@ BFSB_SEARXNG_OWNER_FILE="$BFSB_RUNTIME_DIR/searxng.owner"
 BFSB_LAUNCHER_LOCKED=0
 mkdir -p "$SEARXNG_SETTINGS_DIR"
 
-# Ensure settings.yml exists with json enabled + a local secret.
 if [ ! -f "$SEARXNG_SETTINGS_DIR/settings.yml" ]; then
     SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || openssl rand -hex 32)
     cat > "$SEARXNG_SETTINGS_DIR/settings.yml" <<EOF
@@ -129,7 +79,7 @@ start_searxng() {
         fi
         echo "[BFSB] Starting existing searxng container..."
         podman start "$SEARXNG_NAME" >> "$SEARXNG_LOG" 2>&1 || {
-            echo "[BFSB] 'podman start' failed, recreating container..."
+            echo "[BFSB] podman start failed, recreating..."
             podman rm -f "$SEARXNG_NAME" >/dev/null 2>&1 || true
         }
         if [ "$(podman container inspect -f '{{.State.Running}}' "$SEARXNG_NAME" 2>/dev/null)" = "true" ]; then
@@ -139,17 +89,11 @@ start_searxng() {
     fi
     if ! podman container exists "$SEARXNG_NAME" >/dev/null 2>&1; then
         echo "[BFSB] Creating searxng container ($SEARXNG_IMAGE)..."
-        podman run -d --replace --name "$SEARXNG_NAME" \
-            -p 127.0.0.1:8888:8888 \
-            -v "$SEARXNG_SETTINGS_DIR:/etc/searxng:Z" \
-            -e "BASE_URL=http://127.0.0.1:8888/" \
-            -e "SEARXNG_PORT=8888" \
-            "$SEARXNG_IMAGE" >> "$SEARXNG_LOG" 2>&1 || return 1
+        podman run -d --replace --name "$SEARXNG_NAME" -p 127.0.0.1:8888:8888 -v "$SEARXNG_SETTINGS_DIR:/etc/searxng:Z" -e "BASE_URL=http://127.0.0.1:8888/" -e "SEARXNG_PORT=8888" "$SEARXNG_IMAGE" >> "$SEARXNG_LOG" 2>&1 || return 1
     else
         podman start "$SEARXNG_NAME" >> "$SEARXNG_LOG" 2>&1 || return 1
     fi
-    # Wait for /healthz
-    for i in $(seq 1 $((SEARXNG_READY_TIMEOUT * 2))); do
+    for _ in $(seq 1 $((SEARXNG_READY_TIMEOUT * 2))); do
         if curl -sf -m 1 http://127.0.0.1:8888/healthz >/dev/null 2>&1; then
             echo "[BFSB] SearXNG ready"
             return 0
@@ -184,6 +128,9 @@ claim_launcher_lock() {
     printf '%s\n' "$$" > "$BFSB_LAUNCHER_PID_FILE"
 }
 
+SEARXNG_START_PID=""
+BFSB_CLEANUP_SERVICES=0
+
 start_searxng_async() {
     if [ "${BFSB_LAUNCHER_LOCKED:-0}" = "1" ]; then
         (start_searxng >> "$BFSB_RUNTIME_DIR/searxng-start.log" 2>&1 9>&-) &
@@ -192,9 +139,6 @@ start_searxng_async() {
     fi
     SEARXNG_START_PID=$!
 }
-
-SEARXNG_START_PID=""
-BFSB_CLEANUP_SERVICES=0
 
 terminate_tree() {
     local pid="$1"
@@ -288,12 +232,8 @@ for _ in $(seq 1 20); do
     fi
     sleep 0.2
 done
-
-# Bring up the search backend without delaying the browser window.
 start_searxng_async
-
 cd "$BFSB_DIR"
-# Run BFSB in its own session so cleanup can terminate the Qt/WebEngine tree.
 if command -v setsid >/dev/null 2>&1; then
     if [ "${BFSB_LAUNCHER_LOCKED:-0}" = "1" ]; then
         setsid python3 -m bfsb.main "$@" 9>&- &

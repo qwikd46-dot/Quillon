@@ -62,45 +62,36 @@ async def main():
             print("  target:", repr(m), href)
     # marker-based isolation on the two views
     pgs = pages()
+    old_targets = {p["webSocketDebuggerUrl"] for p in pgs}
     async with websockets.connect(pgs[0]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
         await eval_js(w, "window.__tabMarker='ALPHA'")
-        await eval_js(w, "fetch('bfsb://newTab').catch(()=>{})")  # third tab for clarity
+        await eval_js(w, "fetch('bfsb://newTab').catch(()=>{})")
         await asyncio.sleep(4)
     check("three tabs", state()["view_count"] == 3)
-    # Marker check keyed by URL (CDP target ordering is not stable):
-    # set the marker on a HOME tab, assert the RESULTS tab lacks it.
+
     pgs = pages()
-    home_t = [p for p in pgs if p["url"].rstrip("/") == "http://127.0.0.1:8889"]
-    res_t = [p for p in pgs if "search?q=" in p["url"]]
-    if home_t and res_t:
-        # Isolation = per-tab server-rendered state differs: the results tab
-        # carries its query in __BFSB_PAGE__.query; a home tab's is empty.
-        # Wait until the results tab's URL actually reflects the search (the
-        # CDP target list can lag behind the real navigation).
-        async def wait_url_has(ws, substr, tries=50):
-            for _ in range(tries):
-                href = await eval_js(ws, "location.href")
-                if href and substr in href:
-                    return True
-                await asyncio.sleep(0.25)
-            return False
-        async with websockets.connect(res_t[0]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
-            arrived = await wait_url_has(w, "search?q=")
-            rq = await eval_js(w, "(window.__BFSB_PAGE__||{}).query || ''") if arrived else None
-        async with websockets.connect(home_t[0]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
-            hq = await eval_js(w, "(window.__BFSB_PAGE__||{}).query || ''")
-        check("tabs own their state (query isolation)", bool(rq) and hq == "")
-    else:
-        check("tabs own their state (query isolation)", False)
-    # search in current tab, then confirm only that tab has results
-    async with websockets.connect(pgs[1]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
+    search_target = next((p for p in pgs if p["webSocketDebuggerUrl"] not in old_targets), pgs[-1])
+    async with websockets.connect(search_target["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
         await eval_js(w, "location.href='/search?q=github'")
         await asyncio.sleep(6)
+
+    pgs = pages()
+    home_t = [p for p in pgs if p["url"].rstrip("/") == "http://127.0.0.1:8889"]
+    res_t = [p for p in pgs if "search?q=github" in p["url"]]
+    if home_t and res_t:
+        async with websockets.connect(res_t[0]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
+            rq = await eval_js(w, "(window.__BFSB_PAGE__||{}).query || ''")
+        async with websockets.connect(home_t[0]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
+            hq = await eval_js(w, "(window.__BFSB_PAGE__||{}).query || ''")
+        check("tabs own their state (query isolation)", rq == "github" and hq == "")
+    else:
+        check("tabs own their state (query isolation)", False)
+
     cnt = []
     for p in pages():
         async with websockets.connect(p["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
             cnt.append(await eval_js(w, "document.querySelectorAll('#resultsList .result-item').length"))
-    check("exactly one tab shows results", cnt.count(8) == 1 and min(cnt) == 0)
+    check("exactly one tab shows results", len(cnt) == 3 and cnt.count(8) == 1 and min(cnt) == 0)
     print("results per tab:", cnt)
     # chrome toggle on external site (current view = whatever stack shows; navigate current to example.com via address submit)
     s = state()

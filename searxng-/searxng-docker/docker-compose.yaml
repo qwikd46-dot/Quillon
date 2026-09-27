@@ -1,0 +1,38 @@
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - OPENVPN_USER=9zNMtAtp7wvw1Grx
+      - OPENVPN_PASSWORD=3xM3L7mtVcgI59id1sCvY02OC3YkPEl5
+      - SERVER_COUNTRIES=Netherlands
+      - FREE_ONLY=on
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    network_mode: "service:gluetun"
+    volumes:
+      - ${SEARXNG_DATA}:/etc/searxng:rw
+      - ./data:/var/cache/searxng:rw
+    environment:
+  - BASE_URL=http://0.0.0.0:8081
+  - GRANIAN_HOST=0.0.0.0
+  - GRANIAN_PORT=8081
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    depends_on:
+      - gluetun   
