@@ -1,4 +1,4 @@
-"""Cookie records backed by the versioned BFSB vault."""
+"""Encrypted password records backed by the versioned BFSB vault."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .secure_vault import (
 )
 
 
-class CookieVault:
+class PasswordVault:
     def __init__(self) -> None:
         self._store: Optional[VaultStore] = None
         self.last_error: Optional[str] = None
@@ -29,7 +29,7 @@ class CookieVault:
         store = VaultStore(
             PATHS.VAULT_DB,
             VaultKeyProvider(PATHS.VAULT_KEY, vault_db=PATHS.VAULT_DB),
-            "cookies",
+            "passwords",
         )
         self._store = store
         try:
@@ -48,7 +48,7 @@ class CookieVault:
             return True
         except (VaultError, sqlite3.Error, OSError) as error:
             self.last_error = str(error)
-            print(f"[BFSB] Cookie vault unavailable: {error}", file=sys.stderr)
+            print(f"[BFSB] Password vault unavailable: {error}", file=sys.stderr)
             return False
 
     @property
@@ -70,7 +70,7 @@ class CookieVault:
 
     @contextmanager
     def _legacy_connection(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(str(PATHS.COOKIE_DB), timeout=1)
+        conn = sqlite3.connect(str(PATHS.PASSWORD_DB), timeout=1)
         try:
             yield conn
             conn.commit()
@@ -81,26 +81,30 @@ class CookieVault:
             conn.close()
 
     def _init_legacy_db(self) -> None:
-        PATHS.COOKIE_DB.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        PATHS.PASSWORD_DB.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with self._legacy_connection() as conn:
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS cookies "
-                "(domain TEXT, name TEXT, value BLOB, PRIMARY KEY(domain, name))"
+                "CREATE TABLE IF NOT EXISTS passwords ("
+                "origin TEXT NOT NULL, username TEXT NOT NULL, "
+                "value BLOB NOT NULL, updated_at REAL NOT NULL, "
+                "PRIMARY KEY(origin, username))"
             )
-        PATHS.COOKIE_DB.chmod(0o600)
+        PATHS.PASSWORD_DB.chmod(0o600)
 
     @staticmethod
-    def _record_key(domain: str, name: str) -> str:
-        return f"{domain}\0{name}"
+    def _record_key(origin: str, username: str) -> str:
+        return f"{origin}\0{username}"
 
     @staticmethod
-    def _legacy_aad(domain: str) -> bytes:
-        return domain.encode("utf-8")
+    def _legacy_aad(origin: str, username: str) -> bytes:
+        return f"{origin}\0{username}".encode("utf-8")
 
     def _legacy_rows(self) -> list[tuple[str, str, bytes]]:
         try:
             with self._legacy_connection() as conn:
-                rows = conn.execute("SELECT domain, name, value FROM cookies").fetchall()
+                rows = conn.execute(
+                    "SELECT origin, username, value FROM passwords"
+                ).fetchall()
         except sqlite3.Error:
             return []
         values: list[tuple[str, str, bytes]] = []
@@ -116,7 +120,7 @@ class CookieVault:
         with self._legacy_connection() as conn:
             conn.execute("PRAGMA secure_delete=ON")
             conn.executemany(
-                "DELETE FROM cookies WHERE domain=? AND name=?", keys
+                "DELETE FROM passwords WHERE origin=? AND username=?", keys
             )
             conn.commit()
 
@@ -129,124 +133,93 @@ class CookieVault:
         except Exception:
             return
         migrated: list[tuple[str, str]] = []
-        for domain, name, stored in rows:
+        for origin, username, stored in rows:
             if len(stored) <= 12:
                 continue
             try:
-                value = cipher.decrypt(
-                    stored[:12], stored[12:], self._legacy_aad(domain)
+                password = cipher.decrypt(
+                    stored[:12], stored[12:], self._legacy_aad(origin, username)
                 )
-                self._store.put(self._record_key(domain, name), value)
+                self._store.put(self._record_key(origin, username), password)
             except (InvalidTag, VaultError, ValueError, UnicodeError, sqlite3.Error):
                 continue
-            migrated.append((domain, name))
+            migrated.append((origin, username))
         self._delete_legacy(migrated)
 
-    def set_cookie(self, domain: str, name: str, value: bytes) -> bool:
-        if not domain or not name or not self._ensure_store():
+    def save(self, origin: str, username: str, password: str) -> bool:
+        origin = origin.strip()
+        username = username.strip()
+        if not origin or not username or not password:
+            return False
+        if not self._ensure_store():
             return False
         try:
-            self._store.put(self._record_key(domain, name), bytes(value))
-            self._delete_legacy([(domain, name)])
+            self._store.put(
+                self._record_key(origin, username), password.encode("utf-8")
+            )
+            self._delete_legacy([(origin, username)])
             return True
         except (VaultError, sqlite3.Error) as error:
             self.last_error = str(error)
-            print(f"[BFSB] Cookie save failed: {error}", file=sys.stderr)
+            print(f"[BFSB] Password save failed: {error}", file=sys.stderr)
             return False
 
-    def get_cookie(self, domain: str, name: str) -> Optional[bytes]:
+    def get(self, origin: str, username: str) -> Optional[str]:
         if not self._ensure_store():
             return None
-        record_key = self._record_key(domain, name)
+        origin = origin.strip()
+        username = username.strip()
+        if not origin or not username:
+            return None
+        record_key = self._record_key(origin, username)
         try:
             value = self._store.get(record_key)
         except VaultIntegrityError:
             raise
         if value is not None:
-            return value
+            try:
+                return value.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise VaultIntegrityError("password record is not valid UTF-8") from error
         try:
             with self._legacy_connection() as conn:
                 row = conn.execute(
-                    "SELECT value FROM cookies WHERE domain=? AND name=?",
-                    (domain, name),
+                    "SELECT value FROM passwords WHERE origin=? AND username=?",
+                    (origin, username),
                 ).fetchone()
             if row is None:
                 return None
             if row[0] is None:
-                raise VaultIntegrityError("legacy cookie record is empty")
+                raise VaultIntegrityError("legacy password record is empty")
             cipher = KEY_MANAGER.get_aesgcm()
             stored = bytes(row[0])
             value = cipher.decrypt(
-                stored[:12], stored[12:], self._legacy_aad(domain)
+                stored[:12], stored[12:], self._legacy_aad(origin, username)
             )
             self._store.put(record_key, value)
-            self._delete_legacy([(domain, name)])
-            return value
+            self._delete_legacy([(origin, username)])
+            return value.decode("utf-8")
         except InvalidTag as error:
-            raise VaultIntegrityError("legacy cookie record authentication failed") from error
-        except ValueError as error:
-            raise VaultIntegrityError("legacy cookie record is invalid") from error
+            raise VaultIntegrityError("legacy password record authentication failed") from error
+        except (ValueError, UnicodeError) as error:
+            raise VaultIntegrityError("legacy password record is invalid") from error
         except sqlite3.Error as error:
-            raise VaultError("legacy cookie store is unavailable") from error
+            raise VaultError("legacy password store is unavailable") from error
 
-    def delete_cookie(self, domain: str, name: str) -> bool:
+    def delete(self, origin: str, username: str) -> bool:
         if not self._ensure_store():
             return False
-        self._store.delete(self._record_key(domain, name))
-        self._delete_legacy([(domain, name)])
+        self._store.delete(self._record_key(origin.strip(), username.strip()))
+        self._delete_legacy([(origin.strip(), username.strip())])
         return True
 
-    def clear_domain(self, domain: str) -> bool:
-        if not self._ensure_store():
-            return False
-        normalized = domain.strip().lower()
-        if not normalized:
-            raise ValueError("cookie domain is required")
-        keys = [
-            record_key
-            for record_key in self._store.keys(strict=False)
-            if record_key.partition("\0")[0].lower() == normalized
-        ]
-        for record_key in keys:
-            self._store.delete(record_key)
-        self._delete_legacy(
-            [
-                (row[0], row[1])
-                for row in self._legacy_rows()
-                if row[0].strip().lower() == normalized
-            ]
-        )
-        return True
-
-    def entries_for_origin(self, origin: str) -> list[tuple[str, bytes]]:
-        """Every (name, value) held for one origin key.
-
-        The cookie sync needs to replay the whole vault into a profile at
-        startup, and keys() only returns the opaque record keys -- the
-        plaintext name lives inside the encrypted record, so it has to be
-        decrypted to be useful.
-        """
-        if not origin or not self._ensure_store():
-            return []
-        found: list[tuple[str, bytes]] = []
-        for record_key in self._store.keys(strict=False):
-            if record_key.partition("\0")[0] != origin:
-                continue
-            value = self.get_cookie(origin, record_key.partition("\0")[2])
-            if value is not None:
-                found.append((record_key.partition("\0")[2], value))
-        return found
-
-    def all_entries(self) -> list[tuple[str, str, bytes]]:
-        """Every (origin, name, value) in the vault."""
+    def origins(self) -> list[tuple[str, str]]:
         if not self._ensure_store():
             return []
-        out: list[tuple[str, str, bytes]] = []
+        values: set[tuple[str, str]] = set()
         for record_key in self._store.keys(strict=False):
-            origin, _, name = record_key.partition("\0")
-            if not origin or not name:
-                continue
-            value = self.get_cookie(origin, name)
-            if value is not None:
-                out.append((origin, name, value))
-        return out
+            origin, separator, username = record_key.partition("\0")
+            if separator:
+                values.add((origin, username))
+        values.update((origin, username) for origin, username, _ in self._legacy_rows())
+        return sorted(values)

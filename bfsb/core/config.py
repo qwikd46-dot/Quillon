@@ -10,6 +10,9 @@ class Paths:
     """Application paths."""
     BFSB_DIR: Path = Path.home() / ".bfsb"
     COOKIE_DB: Path = BFSB_DIR / "cookies.enc"
+    PASSWORD_DB: Path = BFSB_DIR / "passwords.enc"
+    VAULT_DB: Path = BFSB_DIR / "vault.enc"
+    VAULT_KEY: Path = BFSB_DIR / "vault.key"
     BLOCKLIST_DIR: Path = BFSB_DIR / "blocklists"
     KEY_FILE: Path = BFSB_DIR / ".hw-key"
     LOG_FILE: Path = BFSB_DIR / "bfsb.log"
@@ -18,8 +21,10 @@ class Paths:
 
     def ensure_dirs(self) -> None:
         """Create required directories."""
-        self.BFSB_DIR.mkdir(exist_ok=True)
-        self.BLOCKLIST_DIR.mkdir(exist_ok=True)
+        self.BFSB_DIR.mkdir(mode=0o700, exist_ok=True)
+        self.BLOCKLIST_DIR.mkdir(mode=0o700, exist_ok=True)
+        self.BFSB_DIR.chmod(0o700)
+        self.BLOCKLIST_DIR.chmod(0o700)
 
 
 @dataclass(frozen=True)
