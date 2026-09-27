@@ -127,6 +127,31 @@ class BlockedQueryTests(unittest.TestCase):
         self.assertIsNone(safety.matched_domain("pornhub.example.org"))
         self.assertEqual(safety.classify("pornhub.example.org"), "pornhub")
 
+    def test_brand_domains_only_match_on_a_label_boundary(self):
+        """The brand list is a set of alternations, not a substring test.
+
+        Removing either lookaround lets "notpornhub.com" and
+        "pornhub.community" through, and nothing else in the suite
+        noticed: the existing clone test is saved by the host walk, not by
+        the pattern.
+        """
+        # Lookbehind: no match when the domain is glued to more name.
+        self.assertIsNone(safety.matched_domain("notpornhub.com"))
+        self.assertIsNone(safety.matched_domain("my-pornhub.com"))
+        # Lookahead: no match when a longer label extends the domain.
+        self.assertIsNone(safety.matched_domain("pornhub.community"))
+        self.assertIsNone(safety.matched_domain("xhamster.io"))
+        # But a real one still matches, in a URL or in running text.
+        self.assertEqual(safety.matched_domain("pornhub.com"), "pornhub.com")
+        self.assertEqual(
+            safety.matched_domain("visit pornhub.com today"), "pornhub.com"
+        )
+        self.assertEqual(
+            safety.matched_domain("best cam4.com video"), "cam4.com"
+        )
+        # A subdomain is reported by the host walk, not the alternation.
+        self.assertEqual(safety.matched_domain("sub.onlyfans.com"), "onlyfans.com")
+
     def test_ordinary_searches_pass(self):
         for value in (
             "python tutorial",

@@ -184,7 +184,10 @@ def enabled() -> bool:
 def _read_data(name: str) -> frozenset[str]:
     try:
         with open(DATA_DIR / name, encoding="utf-8", errors="replace") as handle:
-            return frozenset(line.strip() for line in handle if line.strip())
+            # map/filter keep this at C speed across ~140k lines. The
+            # generator form stripped every line twice, once to test and
+            # once to keep.
+            return frozenset(filter(None, map(str.strip, handle)))
     except OSError:
         return frozenset()
 
@@ -331,6 +334,12 @@ def _fold(text: str) -> str:
     """
     import unicodedata
 
+    # The overwhelmingly common case is plain ASCII, where NFKD, the
+    # combining-mark pass and the confusables table are all no-ops. This
+    # ran once per matched feed item and was a third of the filter's cost.
+    if text.isascii():
+        return text.lower()
+
     decomposed = unicodedata.normalize("NFKD", text)
     stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
     return stripped.translate(_CONFUSABLES).lower()
@@ -406,20 +415,30 @@ def _host_of(text: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def _domain_pattern(domain: str) -> re.Pattern[str]:
-    """Match a blocklist domain only on a label boundary.
+_adult_domain_re: Optional[re.Pattern[str]] = None
+
+
+def _adult_domain_pattern() -> re.Pattern[str]:
+    """One pattern covering every brand domain, matched on a label boundary.
 
     Keeps ``notpornhub.com`` and ``pornhub.example.org`` out of the net
     while still catching "best pornhub videos".
+
+    This used to be 35 separate compiled patterns scanned one after
+    another, so every string the filter touched cost 30-35 regex scans.
+    A single alternation does the same work in one pass.
     """
-    key = f"domain:{domain}"
-    pattern = _pattern_cache.get(key)
-    if pattern is None:
-        pattern = re.compile(
-            rf"(?<![a-z0-9-]){re.escape(domain)}(?![a-z0-9-])", re.IGNORECASE
+    global _adult_domain_re
+    if _adult_domain_re is None:
+        # Longest first so an alternative that is a prefix of another
+        # cannot shadow it before the trailing lookahead gets its say.
+        body = "|".join(
+            re.escape(d) for d in sorted(ADULT_DOMAINS, key=len, reverse=True)
         )
-        _pattern_cache[key] = pattern
-    return pattern
+        _adult_domain_re = re.compile(
+            rf"(?<![a-z0-9-])(?:{body})(?![a-z0-9-])", re.IGNORECASE
+        )
+    return _adult_domain_re
 
 
 def matched_domain(text: Optional[str]) -> Optional[str]:
@@ -435,10 +454,8 @@ def matched_domain(text: Optional[str]) -> Optional[str]:
         return None
     if "." not in candidate and ":" not in candidate and "/" not in candidate:
         # No host shape at all: only the curated brand patterns can match.
-        for domain in ADULT_DOMAINS:
-            if _domain_pattern(domain).search(candidate):
-                return domain
-        return None
+        hit = _adult_domain_pattern().search(candidate)
+        return hit.group(0).lower() if hit else None
     _ensure_data()
     host = _host_of(candidate)
     if host:
@@ -449,10 +466,8 @@ def matched_domain(text: Optional[str]) -> Optional[str]:
             if "." not in probe:
                 break
             probe = probe.split(".", 1)[1]
-    for domain in ADULT_DOMAINS:
-        if _domain_pattern(domain).search(candidate):
-            return domain
-    return None
+    hit = _adult_domain_pattern().search(candidate)
+    return hit.group(0).lower() if hit else None
 
 
 def _rule_match(present: set[str]) -> Optional[str]:
@@ -465,10 +480,9 @@ def _rule_match(present: set[str]) -> Optional[str]:
     """
     if not (present & SUPPORT_TERMS):
         return None
-    for hint in CORE_HINTS:
-        if hint in present:
-            return hint
-    return None
+    # Set intersection costs O(len(present)) rather than a scan of all
+    # 150-odd hints, and both orders are arbitrary anyway.
+    return next(iter(present & CORE_HINTS), None)
 
 
 def classify(text: Optional[str]) -> Optional[str]:
