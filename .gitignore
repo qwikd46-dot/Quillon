@@ -1,0 +1,28 @@
+# Python bytecode and build artefacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor / agent state
+.vscode/
+.kilo/
+.omo/
+.directory
+
+# Dependencies
+node_modules/
+package-lock.json
+
+# Runtime state written into the repo tree
+*.log
+bfsb_checkup.sh.lock
