@@ -21,7 +21,10 @@ venv/
 
 # Dependencies
 node_modules/
-package-lock.json
+
+# package-lock.json is deliberately NOT ignored: the adblock engine
+# resolves @ghostery/adblocker from node_modules, and the lock file is
+# what makes `npm ci` reproduce the tree a fresh clone needs.
 
 # Runtime state written into the repo tree
 *.log

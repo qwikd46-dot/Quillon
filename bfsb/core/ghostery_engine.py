@@ -71,6 +71,24 @@ class GhosteryEngineClient:
         self._stderr_tail: list[str] = []
         self._log_dir = Path.home() / ".bfsb" / "logs"
 
+    def _node_deps_dir(self) -> Optional[Path]:
+        """Where node would resolve @ghostery/adblocker from.
+
+        Node walks up from the *script's* directory, not from repo_dir --
+        server.js lives in ghostery-adblocker/ but the dependency is
+        installed one level up, so checking only repo_dir/node_modules
+        reports a false "not installed" on a perfectly good checkout.
+        """
+        try:
+            start = self.script_path.resolve().parent
+        except OSError:
+            return None
+        for parent in (start, *start.parents):
+            candidate = parent / "node_modules" / "@ghostery" / "adblocker"
+            if candidate.exists():
+                return candidate
+        return None
+
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
@@ -103,6 +121,19 @@ class GhosteryEngineClient:
             if not self.script_path.exists():
                 raise GhosteryEngineError(
                     f"Ghostery backend script not found: {self.script_path}"
+                )
+
+            # server.js resolves @ghostery/adblocker from node_modules, and
+            # node_modules is not committed. A fresh clone therefore starts
+            # the backend into a MODULE_NOT_FOUND crash whose stack trace says
+            # nothing about the missing install step.
+            if self._node_deps_dir() is None:
+                raise GhosteryEngineError(
+                    "Ghostery adblock dependencies are not installed: no "
+                    "node_modules/@ghostery/adblocker found above "
+                    f"{self.script_path}. Run 'npm install' in {self.repo_dir.parent} "
+                    "(or './bfsb_launcher.sh', which does it for you). Blocking "
+                    "falls back to the DNS blocklist until then."
                 )
 
             self._log_dir.mkdir(parents=True, exist_ok=True)

@@ -196,6 +196,34 @@ start_searxng_async() {
 SEARXNG_START_PID=""
 BFSB_CLEANUP_SERVICES=0
 
+# ---------------------------------------------------------------------------
+# Adblock engine dependencies. ghostery-adblocker/server.js resolves
+# @ghostery/adblocker from node_modules, and node_modules is not committed,
+# so a fresh clone has to install it once. This runs in the background and
+# only when the tree is actually missing; until it finishes, blocking falls
+# back to the DNS blocklist rather than failing to start.
+# ---------------------------------------------------------------------------
+BFSB_NPM_LOG="$BFSB_RUNTIME_DIR/npm-install.log"
+NPM_INSTALL_PID=""
+
+node_deps_present() {
+    [ -d "$BFSB_DIR/node_modules/@ghostery/adblocker" ]
+}
+
+start_npm_async() {
+    if node_deps_present; then
+        return 0
+    fi
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "[BFSB] npm not found; the Ghostery adblock engine stays off" >&2
+        return 1
+    fi
+    echo "[BFSB] installing adblock dependencies (first run only)..."
+    ( cd "$BFSB_DIR" && npm install --no-audit --no-fund ) >>"$BFSB_NPM_LOG" 2>&1 &
+    NPM_INSTALL_PID=$!
+    return 0
+}
+
 terminate_tree() {
     local pid="$1"
     local signal_name="$2"
@@ -291,6 +319,11 @@ done
 
 # Bring up the search backend without delaying the browser window.
 start_searxng_async
+
+# Same idea for the adblock engine's node dependencies. Deliberately not
+# killed in cleanup(): interrupting npm mid-install can leave node_modules
+# half-written, and this only ever runs once.
+start_npm_async
 
 cd "$BFSB_DIR"
 # Run BFSB in its own session so cleanup can terminate the Qt/WebEngine tree.
