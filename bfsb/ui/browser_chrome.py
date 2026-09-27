@@ -8,9 +8,10 @@ it's a real Qt widget, not part of the web page DOM.
 from __future__ import annotations
 
 from typing import Callable, Optional, List
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QByteArray, QEvent, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget,
+    QFrame,
     QHBoxLayout,
     QVBoxLayout,
     QPushButton,
@@ -18,21 +19,26 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QScrollArea,
     QLabel,
+    QToolButton,
 )
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap
+from PyQt6.QtSvg import QSvgRenderer
 
 from .styles import DIMS, C
+
+
+_BOOKMARK_PATH = "M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"
 
 
 # ══════════════════════════════════════════════════════════════════
 # NATIVE TAB WIDGET
 # ══════════════════════════════════════════════════════════════════
 
-class NativeTab(QWidget):
+class NativeTab(QToolButton):
     """A single tab in the native tab bar — styled like the new GUI."""
 
-    clicked = pyqtSignal(int)   # emits index
-    closed = pyqtSignal(int)    # emits index
+    activated = pyqtSignal(int)
+    closed = pyqtSignal(int)
 
     # Palette mirrors bfsb_combined.html :root tokens.
     _BG_TAB = "#171c33"
@@ -46,19 +52,21 @@ class NativeTab(QWidget):
 
     def __init__(self, index: int, title: str = "New Tab"):
         super().__init__()
+        self.setAutoRaise(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._index = index
         self._active = False
-        self.setFixedHeight(36)
-        self.setMinimumWidth(120)
-        self.setMaximumWidth(220)
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(38)
+        self.setFixedWidth(190)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 0, 30, 0)
-        layout.setSpacing(4)
+        layout.setContentsMargins(14, 0, 10, 0)
+        layout.setSpacing(12)
 
         self.title_label = QLabel(title)
+        self.title_label.setMaximumWidth(132)
         self.title_label.setStyleSheet(f"""
             color: {self._TEXT_DIM};
             font-size: 13px;
@@ -66,20 +74,21 @@ class NativeTab(QWidget):
             border: none;
         """)
         self.title_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self.title_label, 1)
-
-        from PyQt6.QtWidgets import QToolButton
 
         self.close_btn = QToolButton(self)
         self.close_btn.setText("✕")
-        self.close_btn.setFixedSize(18, 16)
+        self.close_btn.setAutoRaise(True)
+        self.close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_btn.setFixedSize(18, 18)
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.setStyleSheet(f"""
             QToolButton {{
                 background: transparent;
                 border: none;
                 color: {self._TEXT_DIM};
-                font-size: 11px;
+                font-size: 13px;
                 border-radius: 8px;
             }}
             QToolButton:hover {{
@@ -87,7 +96,9 @@ class NativeTab(QWidget):
                 color: {self._TEXT};
             }}
         """)
-        self.close_btn.clicked.connect(lambda: self.closed.emit(self._index))
+        self.close_btn.clicked.connect(self._on_close_clicked)
+        layout.addWidget(self.close_btn)
+        self.clicked.connect(self._on_clicked)
         self._close_visible = False
         self.close_btn.setVisible(False)
 
@@ -96,28 +107,38 @@ class NativeTab(QWidget):
     def _update_style(self):
         if self._active:
             self.setStyleSheet(f"""
-                QWidget {{
+                QToolButton {{
                     background: {self._BG_TAB_ACTIVE};
                     border: 1px solid {self._ACCENT};
                     border-radius: 10px;
+                    padding: 0;
+                }}
+                QToolButton:hover {{
+                    background: {self._BG_TAB_ACTIVE};
+                }}
+                QToolButton:pressed {{
+                    background: {self._BG_TAB_ACTIVE};
                 }}
             """)
             self.title_label.setStyleSheet(f"""
                 color: {self._TEXT};
                 font-size: 13px;
-                font-weight: 500;
                 background: transparent;
                 border: none;
             """)
             self._set_close_visible(True)
         else:
             self.setStyleSheet(f"""
-                QWidget {{
+                QToolButton {{
                     background: {self._BG_TAB};
                     border: 1px solid {self._BORDER};
                     border-radius: 10px;
+                    padding: 0;
                 }}
-                QWidget:hover {{
+                QToolButton:hover {{
+                    background: {self._HOVER};
+                }}
+                QToolButton:pressed {{
                     background: {self._HOVER};
                 }}
             """)
@@ -127,17 +148,11 @@ class NativeTab(QWidget):
                 background: transparent;
                 border: none;
             """)
-            self._set_close_visible(False)
+            self._set_close_visible(True)
 
     def _set_close_visible(self, visible: bool):
         self._close_visible = visible
         self.close_btn.setVisible(visible)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Keep the close button pinned at the right edge (it's not in the
-        # layout — the title keeps a 30px right margin free for it).
-        self.close_btn.move(self.width() - 28, 10)
 
     def set_active(self, active: bool):
         if self._active != active:
@@ -154,22 +169,18 @@ class NativeTab(QWidget):
     def set_index(self, index: int):
         self._index = index
 
-    # Click handling: use mousePressEvent on the tab widget AND title label
-    # This is safe on plain QWidget (segfault was only on QWebEngineView)
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self._index)
-        super().mousePressEvent(event)
+    def _on_clicked(self, _checked: bool = False) -> None:
+        try:
+            self.activated.emit(self._index)
+        except Exception as error:
+            print(f"[Chrome] tab activation failed: {error}")
 
-    def enterEvent(self, event):
-        if not self._active:
-            self._set_close_visible(True)
-        super().enterEvent(event)
+    def _on_close_clicked(self, _checked: bool = False) -> None:
+        try:
+            self.closed.emit(self._index)
+        except Exception as error:
+            print(f"[Chrome] tab close failed: {error}")
 
-    def leaveEvent(self, event):
-        if not self._active:
-            self._set_close_visible(False)
-        super().leaveEvent(event)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -185,7 +196,7 @@ class NativeTabBar(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setFixedHeight(46)
+        self.setFixedHeight(50)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setStyleSheet("""
             QWidget { background: #0e1220; border: none; }
@@ -199,10 +210,11 @@ class NativeTabBar(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setStyleSheet("""
             QScrollArea { background: transparent; border: none; }
-            QScrollBar:horizontal { height: 0px; }
+            QScrollBar:horizontal { height: 6px; background: transparent; }
+            QScrollBar::handle:horizontal { background: #2b3355; border-radius: 3px; }
         """)
 
         self._tabs_container = QWidget()
@@ -210,7 +222,7 @@ class NativeTabBar(QWidget):
         self._tabs_layout = QHBoxLayout(self._tabs_container)
         self._tabs_layout.setContentsMargins(0, 0, 0, 0)
         self._tabs_layout.setSpacing(8)
-        self._tabs_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._tabs_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._scroll.setWidget(self._tabs_container)
         layout.addWidget(self._scroll, 1)
 
@@ -233,14 +245,14 @@ class NativeTabBar(QWidget):
             }
         """)
         self.new_tab_btn.clicked.connect(self.new_tab_requested.emit)
-        layout.addWidget(self.new_tab_btn)
+        self._tabs_layout.addWidget(self.new_tab_btn)
 
         self._tabs: List[NativeTab] = []
         self._active_index = -1
 
     def add_tab(self, index: int, title: str = "New Tab") -> NativeTab:
         tab = NativeTab(index, title)
-        tab.clicked.connect(self._on_tab_clicked)
+        tab.activated.connect(self._on_tab_clicked)
         tab.closed.connect(self._on_tab_closed)
         self._tabs.insert(index, tab)
         self._tabs_layout.insertWidget(index, tab)
@@ -279,11 +291,19 @@ class NativeTabBar(QWidget):
             self._tabs[index].set_active(True)
 
     def _on_tab_clicked(self, index: int):
-        self._set_active(index)
-        self.tab_switched.emit(index)
+        if not (0 <= index < len(self._tabs)):
+            return
+        try:
+            self._set_active(index)
+            self.tab_switched.emit(index)
+        except Exception as error:
+            print(f"[Chrome] tab switch dispatch failed: {error}")
 
     def _on_tab_closed(self, index: int):
-        self.tab_closed.emit(index)
+        try:
+            self.tab_closed.emit(index)
+        except Exception as error:
+            print(f"[Chrome] tab close dispatch failed: {error}")
 
     def set_active(self, index: int):
         self._set_active(index)
@@ -311,6 +331,20 @@ class NativeTabBar(QWidget):
             self.add_tab(i, title)
         self._set_active(active)
 
+    def reorder_tabs(self, from_index: int, to_index: int) -> None:
+        if not (0 <= from_index < len(self._tabs)):
+            return
+        to_index = max(0, min(to_index, len(self._tabs) - 1))
+        if from_index == to_index:
+            return
+        tab = self._tabs.pop(from_index)
+        self._tabs.insert(to_index, tab)
+        self._tabs_layout.removeWidget(tab)
+        self._tabs_layout.insertWidget(to_index, tab)
+        for index, item in enumerate(self._tabs):
+            item.set_index(index)
+        self._set_active(self._active_index)
+
     def clear(self):
         for tab in self._tabs:
             self._tabs_layout.removeWidget(tab)
@@ -319,151 +353,197 @@ class NativeTabBar(QWidget):
         self._active_index = -1
 
 
+class RoundedAddressPill(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()).adjusted(1.0, 1.0, -1.0, -1.0), 21.0, 21.0)
+        painter.fillPath(path, QColor("#141933"))
+        painter.end()
+
+
 # ══════════════════════════════════════════════════════════════════
 # NATIVE NAVIGATION BAR (URL bar + buttons)
 # ══════════════════════════════════════════════════════════════════
 
 class NativeNavBar(QWidget):
-    """Navigation bar with back/forward/reload + URL input + menu."""
+    """Navigation bar with back/forward/reload + URL input."""
 
     back_clicked = pyqtSignal()
     forward_clicked = pyqtSignal()
     reload_clicked = pyqtSignal()
     url_submitted = pyqtSignal(str)
-    menu_clicked = pyqtSignal()
-    bookmark_toggle = pyqtSignal()  # emitted when user clicks star
+    bookmark_toggle = pyqtSignal()
+
+    @staticmethod
+    def _render_icon(svg: str, size: int = 20) -> QIcon:
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QIcon(pixmap)
+
+    @staticmethod
+    def _line_icon(paths: str, color: str = "#9aa0b5", size: int = 20) -> QIcon:
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            f'fill="none" stroke="{color}" stroke-width="1.8" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            f'{paths}</svg>'
+        )
+        return NativeNavBar._render_icon(svg, size)
+
+    @staticmethod
+    def _bookmark_icon(marked: bool) -> QIcon:
+        fill = "#7b5cff" if marked else "none"
+        stroke = "#7b5cff" if marked else "#9aa0b5"
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+            f'<path d="{_BOOKMARK_PATH}" fill="{fill}" stroke="{stroke}" '
+            'stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
+            '</svg>'
+        )
+        return NativeNavBar._render_icon(svg)
 
     def __init__(self):
         super().__init__()
         self.setFixedHeight(52)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet("""
-            QWidget { background: #0e1220; border: none; }
-        """)
+        self.setStyleSheet("QWidget { background: #0e1220; border: none; }")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(8)
 
-        # Back button
-        self.btn_back = self._make_nav_button("←")
+        self.btn_back = self._make_nav_button("", '<path d="M19 12H5m7-7-7 7 7 7"/>')
         self.btn_back.setToolTip("Back")
         self.btn_back.clicked.connect(self.back_clicked.emit)
         layout.addWidget(self.btn_back)
 
-        # Forward button
-        self.btn_forward = self._make_nav_button("→")
+        self.btn_forward = self._make_nav_button("", '<path d="M5 12h14m-7-7 7 7-7 7"/>')
         self.btn_forward.setToolTip("Forward")
         self.btn_forward.clicked.connect(self.forward_clicked.emit)
         layout.addWidget(self.btn_forward)
 
-        # Reload button
-        self.btn_reload = self._make_nav_button("⟳")
+        self.btn_reload = self._make_nav_button("", '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>')
         self.btn_reload.setToolTip("Reload")
         self.btn_reload.clicked.connect(self.reload_clicked.emit)
         layout.addWidget(self.btn_reload)
 
-        # URL input (pill-shaped, matches the GUI address bar)
+        self.address_pill = RoundedAddressPill()
+        self.address_pill.setObjectName("addressPill")
+        self.address_pill.setProperty("focused", False)
+        self.address_pill.setFixedHeight(42)
+        self.address_pill.setStyleSheet("""
+            QFrame#addressPill {
+                background: transparent;
+                border: none;
+                border-radius: 22px;
+            }
+            QFrame#addressPill[focused="true"] { border: none; }
+        """)
+        pill_layout = QHBoxLayout(self.address_pill)
+        pill_layout.setContentsMargins(18, 11, 18, 11)
+        pill_layout.setSpacing(14)
+        self.search_icon = QLabel()
+        self.search_icon.setPixmap(self._line_icon(
+            '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>', size=18
+        ).pixmap(QSize(18, 18)))
+        self.search_icon.setFixedSize(18, 18)
+        self.search_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.search_icon.setStyleSheet("color: #9aa0b5; font-size: 21px; background: transparent; border: none;")
+        pill_layout.addWidget(self.search_icon)
         self.url_input = QLineEdit()
+        self.url_input.setMinimumWidth(0)
+        self.url_input.setObjectName("nativeUrlInput")
         self.url_input.setPlaceholderText("Search privately or enter URL...")
         self.url_input.setStyleSheet("""
             QLineEdit {
-                background: #141933;
-                border: 1px solid #232a4a;
-                border-radius: 20px;
-                padding: 0 18px;
-                color: #e8eaf2;
-                font-size: 14px;
-                min-height: 38px;
-                max-height: 38px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #7b5cff;
-                background: #141933;
-            }
-        """)
-        self.url_input.returnPressed.connect(self._on_url_submit)
-        layout.addWidget(self.url_input, 1)
-
-        # Bookmarks star button. Hollow star = not bookmarked, filled = bookmarked.
-        # Fill-only state — no border/circle, no focus rect, no yellow anywhere.
-        self.btn_bookmark = QPushButton("☆")
-        self.btn_bookmark.setFixedSize(30, 30)
-        self.btn_bookmark.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_bookmark.setToolTip("Bookmark this page")
-        self.btn_bookmark.setStyleSheet(f"""
-            QPushButton {{
                 background: transparent;
                 border: none;
-                color: #9aa0b5;
-                font-size: 17px;
-                border-radius: 15px;
+                color: #e8eaf2;
+                font-size: 14px;
                 padding: 0;
-                margin: 0;
-                outline: none;
-            }}
-            QPushButton:hover {{
-                background: rgba(123, 92, 255, 0.15);
-                color: #7b5cff;
-            }}
-            QPushButton:focus,
-            QPushButton:focus:hover,
-            QPushButton:focus:pressed {{ outline: none; border: none; background: transparent; }}
-            QPushButton[bookmarked="true"] {{
-                background: rgba(123, 92, 255, 0.12);
-                color: #7b5cff;
-            }}
-            QPushButton:hover[bookmarked="true"] {{
-                background: rgba(123, 92, 255, 0.2);
-                color: #7b5cff;
-            }}
+                 min-height: 18px;
+                 max-height: 18px;
+            }
+            QLineEdit:focus { border: none; }
         """)
-        self.btn_bookmark.setProperty("bookmarked", False)
-        self.btn_bookmark.clicked.connect(self._on_bookmark_clicked)
-        layout.addWidget(self.btn_bookmark)
-
-        # Menu button — fill-only violet hover, no border anywhere
-        self.btn_menu = QPushButton("⋮")
-        self.btn_menu.setFixedSize(30, 30)
-        self.btn_menu.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_menu.setToolTip("Menu")
-        self.btn_menu.setStyleSheet("""
+        self.url_input.setFixedHeight(18)
+        self.url_input.returnPressed.connect(self._on_url_submit)
+        self.url_input.installEventFilter(self)
+        pill_layout.addWidget(self.url_input, 1)
+        self.btn_bookmark = QPushButton()
+        self.btn_bookmark.setObjectName("nativeBookmark")
+        self.btn_bookmark.setIcon(self._bookmark_icon(False))
+        self.btn_bookmark.setIconSize(QSize(18, 18))
+        self.btn_bookmark.setFixedSize(18, 18)
+        self.btn_bookmark.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_bookmark.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_bookmark.setToolTip("Bookmark this page")
+        self.btn_bookmark.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 border: none;
                 color: #9aa0b5;
-                font-size: 16px;
-                border-radius: 15px;
-                padding: 0;
-                margin: 0;
-                outline: none;
-            }
-            QPushButton:hover {
-                background: rgba(123, 92, 255, 0.15);
-                color: #e8eaf2;
-            }
-            QPushButton:focus,
-            QPushButton:focus:hover,
-            QPushButton:focus:pressed { outline: none; border: none; background: transparent; }
+                 font-size: 18px;
+                 padding: 0;
+             }
+             QPushButton:focus { outline: none; border: none; background: transparent; }
+             QPushButton:hover { color: #7b5cff; background: transparent; }
+            QPushButton[bookmarked="true"] { color: #7b5cff; background: transparent; }
         """)
-        self.btn_menu.clicked.connect(self.menu_clicked.emit)
-        layout.addWidget(self.btn_menu)
-
+        self.btn_bookmark.setProperty("bookmarked", False)
+        self.btn_bookmark.clicked.connect(self._on_bookmark_clicked)
+        pill_layout.addWidget(self.btn_bookmark)
+        self.lock_icon = QLabel()
+        self.lock_icon.setObjectName("nativeLock")
+        self.lock_icon.setFixedSize(18, 18)
+        self.lock_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lock_icon.setStyleSheet("color: #9aa0b5; font-size: 14px; background: transparent; border: none;")
+        pill_layout.addWidget(self.lock_icon)
+        layout.addWidget(self.address_pill, 1)
         self._update_nav_buttons(False, False)
+
+    def eventFilter(self, watched, event):
+        if watched is self.url_input:
+            if event.type() == QEvent.Type.FocusIn:
+                self._set_address_focus(True)
+            elif event.type() == QEvent.Type.FocusOut:
+                self._set_address_focus(False)
+        return super().eventFilter(watched, event)
+
+    def _set_address_focus(self, focused: bool):
+        self.address_pill.setProperty("focused", bool(focused))
+        self.address_pill.style().unpolish(self.address_pill)
+        self.address_pill.style().polish(self.address_pill)
+        self.address_pill.update()
 
     def _on_bookmark_clicked(self):
         self.bookmark_toggle.emit()
 
     def set_bookmarked(self, bookmarked: bool):
-        """Update the star visual based on bookmark state."""
-        self.btn_bookmark.setText("★" if bookmarked else "☆")
-        self.btn_bookmark.setProperty("bookmarked", bookmarked)
-        # re-apply style so the property change takes effect
+        """Update the bookmark visual based on the current page state."""
+        self.btn_bookmark.setIcon(self._bookmark_icon(bool(bookmarked)))
+        self.btn_bookmark.setProperty("bookmarked", bool(bookmarked))
+        self.btn_bookmark.setToolTip("Remove bookmark" if bookmarked else "Bookmark this page")
         self.btn_bookmark.style().unpolish(self.btn_bookmark)
         self.btn_bookmark.style().polish(self.btn_bookmark)
 
-    def _make_nav_button(self, text: str) -> QPushButton:
+    def _make_nav_button(self, text: str, icon_paths: str = "") -> QPushButton:
         btn = QPushButton(text)
+        if icon_paths:
+            btn.setIcon(self._line_icon(icon_paths, size=18))
+            btn.setIconSize(QSize(18, 18))
+            btn.setText("")
         btn.setFixedSize(30, 30)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet("""
@@ -491,7 +571,16 @@ class NativeNavBar(QWidget):
             self.url_input.clearFocus()
 
     def set_url(self, url: str):
-        # Don't update while user is typing
+        is_https = url.startswith("https://")
+        lock_paths = (
+            '<rect x="5" y="11" width="14" height="9" rx="2"/>'
+            '<path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
+            if is_https else
+            '<rect x="5" y="11" width="14" height="9" rx="2"/>'
+            '<path d="M8 11V7a4 4 0 0 1 7-2.6"/>'
+        )
+        self.lock_icon.setPixmap(self._line_icon(lock_paths, size=18).pixmap(QSize(18, 18)))
+        self.lock_icon.setToolTip("Secure connection" if is_https else "Connection is not secure")
         if self.url_input.hasFocus():
             return
         if url.startswith("bfsb://") or url.startswith("data:"):
@@ -560,52 +649,46 @@ class NativeProgressBar(QWidget):
         self._bar.hide()
         layout.addWidget(self._bar)
 
-        self._anim_timer = None
-        self._target_width = 0
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(80)
+        self._pulse_timer.timeout.connect(self._pulse)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._hide)
+        self._pulse_phase = 0.0
+        self._indeterminate = False
 
     def start_progress(self):
-        """Show and animate progress from 0% (called by main_window on load start)."""
+        self._hide_timer.stop()
+        self._indeterminate = True
+        self._pulse_phase = 0.0
         self.show()
         self._bar.show()
         self._bar.setFixedWidth(0)
-        self._target_width = 0
-        self._animate_progress()
+        self._pulse_timer.start()
 
-    def _animate_progress(self):
-        """Animate progress bar like a real browser."""
-        if self._target_width >= self.width() * 0.9:
+    def _pulse(self):
+        if not self._indeterminate:
             return
-
-        import random
-        increment = random.randint(2, 6)
-        self._target_width = min(self._target_width + increment, int(self.width() * 0.9))
-        self._bar.setFixedWidth(self._target_width)
-
-        from PyQt6.QtCore import QTimer
-        if not self._anim_timer:
-            self._anim_timer = QTimer()
-            self._anim_timer.timeout.connect(self._animate_progress)
-        self._anim_timer.start(100)
+        import math
+        self._pulse_phase += 0.18
+        width = max(24, int(self.width() * (0.18 + 0.12 * (1 + math.sin(self._pulse_phase)))))
+        self._bar.setFixedWidth(min(width, max(24, int(self.width() * 0.42))))
 
     def set_progress(self, percent: int):
-        """Set explicit progress (0-100)."""
-        if percent >= 100:
-            self.complete_progress()
-        else:
-            self._target_width = int(self.width() * percent / 100)
-            self._bar.setFixedWidth(self._target_width)
-            self.show()
-            self._bar.show()
+        self._hide_timer.stop()
+        self._indeterminate = False
+        self._pulse_timer.stop()
+        value = max(0, min(100, int(percent)))
+        self._bar.setFixedWidth(int(self.width() * value / 100) if self.width() else value)
+        self.show()
+        self._bar.show()
 
     def complete_progress(self):
-        """Finish animation and hide (called by main_window on load finish)."""
-        if self._anim_timer:
-            self._anim_timer.stop()
-            self._anim_timer = None
+        self._indeterminate = False
+        self._pulse_timer.stop()
         self._bar.setFixedWidth(self.width())
-
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(200, self._hide)
+        self._hide_timer.start(200)
 
     def _hide(self):
         self._bar.hide()
@@ -632,7 +715,6 @@ class BrowserChrome(QWidget):
     forward_clicked = pyqtSignal()
     reload_clicked = pyqtSignal()
     url_submitted = pyqtSignal(str)
-    menu_clicked = pyqtSignal()
     bookmark_toggle = pyqtSignal()
 
     def __init__(self):
@@ -655,7 +737,6 @@ class BrowserChrome(QWidget):
         self.nav_bar.forward_clicked.connect(self.forward_clicked.emit)
         self.nav_bar.reload_clicked.connect(self.reload_clicked.emit)
         self.nav_bar.url_submitted.connect(self.url_submitted.emit)
-        self.nav_bar.menu_clicked.connect(self.menu_clicked.emit)
         self.nav_bar.bookmark_toggle.connect(self.bookmark_toggle.emit)
         layout.addWidget(self.nav_bar)
 
@@ -688,7 +769,3 @@ class BrowserChrome(QWidget):
 
     def set_active_tab(self, index: int):
         self.tab_bar.set_active(index)
-
-    def menu_button(self):
-        """Return the nav bar's menu button (used as the menu anchor)."""
-        return self.nav_bar.btn_menu

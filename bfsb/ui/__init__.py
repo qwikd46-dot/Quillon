@@ -8,6 +8,7 @@ from .menu import BFSBMenu
 from .main_window import BFSBWindow
 from .search_results import ResultCard, ResultsWidget, PaginationWidget, SearchResultsView
 from .browser_chrome import BrowserChrome, NativeTabBar, NativeNavBar, NativeTab
+from .category_popup import CategoryPopup
 from .popover import (
     BFSBPopover,
     PopoverHost,
@@ -45,6 +46,7 @@ __all__ = [
     "NativeTabBar",
     "NativeNavBar",
     "NativeTab",
+    "CategoryPopup",
     "BFSBPopover",
     "PopoverHost",
     "ListPopover",

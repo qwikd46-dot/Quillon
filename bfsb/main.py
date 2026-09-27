@@ -5,6 +5,7 @@ A privacy-focused browser built on Qt WebEngine with local metasearch.
 
 import os
 import sys
+from pathlib import Path
 
 # Platform: prefer Wayland (we're on Hyprland), fall back to X11.
 # On pure X11 the env is already correct; on Wayland we want the Wayland
@@ -44,10 +45,10 @@ _chromium_flags = (
     "--disable-mojo-internal "
     "--disable-ipc-flooding-protection "
     "--num-raster-threads=1 "
-    "--renderer-process-limit=1 "
-    "--remote-debugging-port=9222 "
-    "--remote-allow-origins=*"
+    "--renderer-process-limit=1"
 )
+if os.environ.get("BFSB_TEST") == "1":
+    _chromium_flags += " --remote-debugging-port=9222 --remote-allow-origins=*"
 
 # Network-level ad blocking: route Chromium through the BFSB mitmproxy addon
 # which rewrites /youtubei/v1/* responses and strips ad placements BEFORE the
@@ -68,14 +69,19 @@ try:
 except Exception as _e:
     print(f"[BFSB] Proxy bootstrap failed: {_e}")
 
+_existing_chromium_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
+if _existing_chromium_flags:
+    _chromium_flags = f"{_existing_chromium_flags} {_chromium_flags}"
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = _chromium_flags
 
 # Disable Qt logging spam
 os.environ["QT_LOGGING_RULES"] = "qt.webenginecontext.debug=false;qt.webenginecontext.warning=false"
 
-# Set Qt WebEngine paths to working locations
-os.environ.setdefault("QTWEBENGINEPROCESS_PATH", "/usr/lib64/qt6/libexec/QtWebEngineProcess")
-os.environ.setdefault("QTWEBENGINE_RESOURCES_PATH", "/home/binwalk/.local/lib/python3.14/site-packages/PyQt6/Qt6/resources")
+# Set Qt WebEngine paths from the active PyQt6 installation.
+import PyQt6
+_pyqt_root = Path(PyQt6.__file__).resolve().parent
+os.environ.setdefault("QTWEBENGINEPROCESS_PATH", str(_pyqt_root / "Qt6" / "libexec" / "QtWebEngineProcess"))
+os.environ.setdefault("QTWEBENGINE_RESOURCES_PATH", str(_pyqt_root / "Qt6" / "resources"))
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWebEngineCore import QWebEngineUrlScheme
@@ -87,9 +93,10 @@ bfsb_scheme.setSyntax(QWebEngineUrlScheme.Syntax.HostPortAndUserInformation)
 bfsb_scheme.setDefaultPort(8889)
 bfsb_scheme.setFlags(
     QWebEngineUrlScheme.Flag.SecureScheme |
+    QWebEngineUrlScheme.Flag.LocalScheme |
+    QWebEngineUrlScheme.Flag.LocalAccessAllowed |
     QWebEngineUrlScheme.Flag.CorsEnabled |
-    QWebEngineUrlScheme.Flag.FetchApiAllowed |
-    QWebEngineUrlScheme.Flag.ContentSecurityPolicyIgnored
+    QWebEngineUrlScheme.Flag.FetchApiAllowed
 )
 try:
     QWebEngineUrlScheme.registerScheme(bfsb_scheme)
@@ -119,15 +126,60 @@ def main() -> int:
     app.setDesktopFileName("bfsb")
 
     from PyQt6.QtGui import QIcon
-    app.setWindowIcon(QIcon("/home/binwalk/Downloads/bfsb/bfsb_icon.png"))
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "templates" / "static" / "bfsb_icon.png")))
 
     from bfsb.ui.styles import get_palette
     app.setPalette(get_palette())
 
     window = BFSBWindow(blocker)
     window.show()
+    _install_shutdown_handler(blocker)
     print("BFSB started")
     return app.exec()
+
+
+def _install_shutdown_handler(blocker) -> None:
+    """Stop the Node adblocker backend on SIGTERM/SIGINT/SIGHUP.
+
+    atexit only runs on a normal interpreter exit. Closing the browser
+    from the launcher, a SIGTERM from the checkup script, or Ctrl-C all
+    terminate the process without it, which is how seventy-one orphaned
+    node processes accumulated. Signal handlers must be installed from the
+    main thread, which is why this is here and not in the engine.
+    """
+    import signal
+
+    def _handler(signum, _frame):
+        try:
+            ghostery = getattr(blocker, "_ghostery", None)
+            if ghostery is not None:
+                ghostery.stop()
+        except Exception:
+            pass
+        try:
+            # mitmdump runs in its own session, so it does not die with us
+            # and nothing after this point runs -- including atexit. Left
+            # alone it stays alive holding port 8228, and the browser shows
+            # ERR_PROXY_CONNECTION_FAILED until the next launch reclaims it.
+            from bfsb.core import proxy_bootstrap as _proxy_bootstrap
+
+            _proxy_bootstrap.shutdown_proxy()
+        except Exception:
+            pass
+        finally:
+            # Re-raise with the default disposition so the exit status and
+            # any core dump behaviour stay normal.
+            signal.signal(signum, signal.SIG_DFL)
+            os.kill(os.getpid(), signum)
+
+    for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            pass  # not the main thread, or unsupported here
 
 
 if __name__ == "__main__":
