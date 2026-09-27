@@ -1,0 +1,123 @@
+# PROBLEM ANALYSIS REPORT: AdBlock Not Working
+
+## ISSUE: Ads Still Showing in Browser
+
+### LOCATION OF PROBLEM:
+The adblock functionality exists but isn't properly intercepting ad requests.
+
+### KEY FINDINGS:
+
+1. **RequestInterceptor Logic** - In `/home/binwalk/Downloads/bfsb/bfsb/core/webengine.py`:
+   - Lines 222-238 implement hardcoded blocking
+   - `HARD_BLOCK_SUBSTRINGS` contains ad patterns
+   - Should block requests BEFORE engine check
+
+2. **Blocklist Engine** - In `/home/binwalk/Downloads/bfsb/bfsb/core/blocker.py`:
+   - Engine initialised with EasyList, EasyPrivacy
+   - Has _BUILTIN_FALLBACK_RULES for ad networks
+   
+   - But download sources updated to uBlock lists which failed
+
+3. **CRITICAL ISSUE IDENTIFIED**:
+   - The HARD_BLOCK_SUBSTRINGS only contains "pagead2.googlesyndication.com"
+   - It should contain ALL ad domain patterns from _BUILTIN_FALLBACK_RULES
+   - The hardcoded list is INCOMPLETE - missing major ad networks
+
+### HARD_BLOCK_SUBSTRINGS CURRENTLY:
+```
+"doubleclick.net",
+"googlesyndication.com", 
+"googleadservices.com",
+"google-analytics.com",
+"googletagmanager.com",
+"googletagservices.com",
+"adservice.google.",
+"pagead2.googlesyndication.com",
+"youtube.com/api/stats/ads",
+"youtube.com/pagead",
+"youtube.com/ptracking",
+"youtube.com/get_midroll",
+"/pagead/",
+"amazon-adsystem.com",
+"adnxs.com",
+"adsrvr.org",
+"criteo.com",
+"taboola.com",
+"outbrain.com",
+"scorecardresearch.com",
+"moatads.com",
+"quantserve.com",
+"facebook.com/tr",
+"connect.facebook.net",
+"hotjar.com",
+"mixpanel.com",
+"segment.io",
+"segment.com",
+```
+
+### WHAT SHOULD BE:
+The hardcoded list should match ALL ad domains from _BUILTIN_FALLBACK_RULES:
+
+```
+||doubleclick.net^
+||googlesyndication.com^
+||googletagservices.com^
+||googleadservices.com^
+||google-analytics.com^
+||googletagmanager.com^
+||googletagservices.com^
+||adservice.google.com^
+||pagead2.googlesyndication
+||tpc.googlesyndication.com^
+||securepubads.g.doubleclick.net^
+||pubads.g.doubleclick.net^
+||youtube.com/api/stats/ads
+||youtube.com/get_midroll_info
+||youtube.com/pagead/
+||youtube.com/ptracking
+||youtube.com/pcs/activeview
+||youtube.com/youtubei/v/log_event
+||googlevideo.com/videogoodput
+||ad.doubleclick.net^
+||adnxs.com^
+||adsrvr.org^
+||criteo.com^
+||criteo.net^
+||outbrain.com^
+||taboola.com^
+||scorecardresearch.com^
+||quantserve.com^
+||moatads.com^
+||amazon-adsystem.com^
+||ads.youtube.com^
+||ad.youtube.com^
+||tracker.com^
+```
+
+### ROOT CAUSE:
+The **HARD_BLOCK_SUBSTRINGS** in webengine.py is missing many ad network domains from the _BUILTIN_FALLBACK_RULES. This means requests to these domains bypass the hardcoded blocking and go through to the engine check.
+
+### SOLUTION:
+Update the HARD_BLOCK_SUBSTRINGS in webengine.py to match ALL ad domains from _BUILTIN_FALLBACK_RULES.
+
+## IMMEDIATE FIX NEEDED:
+
+Edit `/home/binwalk/Downloads/bfsb/bfsb/core/webengine.py` and update the HARD_BLOCK_SUBSTRINGS to include:
+- All domains from _BUILTIN_FALLBACK_RULES
+- Additional ad patterns
+- More comprehensive ad blocking
+
+The issue is not the adblock engine itself, but the incomplete hardcoded blocklist in RequestInterceptor.
+
+## VERIFICATION:
+
+Test with:
+```
+https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js
+https://securepubads.g.doubleclick.net/tag/js/gpt.js
+https://www.google-analytics.com/analytics.js
+https://adservice.google.com/
+https://doubleclick.net/
+```
+
+These should be caught by HARD_BLOCK_SUBSTRINGS.
