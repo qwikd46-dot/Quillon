@@ -9,7 +9,7 @@ Replaces SearXNG templates with native Qt widgets for:
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QSize, QTimer
@@ -27,8 +27,14 @@ from PyQt6.QtWidgets import (
 )
 
 from bfsb.core.search.models import SearchResult
-from bfsb.core.search.manager import MergedSearchResponse
 from bfsb.ui.styles import DIMS, STYLES, get_palette
+
+if TYPE_CHECKING:
+    # Annotation-only. Importing the manager at runtime pulled the whole
+    # provider stack, and httpx with it (~0.27s), into every app launch
+    # for a name that is never evaluated under "from __future__ import
+    # annotations".
+    from bfsb.core.search.manager import MergedSearchResponse
 
 
 class ResultCard(QFrame):

@@ -7,10 +7,13 @@ import socket
 import subprocess
 import threading
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any, Optional
+
+# urllib.error / urllib.request are imported inside the two methods that
+# use them. urllib.request pulls http.client, ssl and email -- ~0.09s --
+# and the engine is constructed during browser startup, long before the
+# first request is proxied.
 
 
 class GhosteryEngineError(RuntimeError):
@@ -84,6 +87,9 @@ class GhosteryEngineClient:
 
     def start(self) -> dict[str, Any]:
         """Start the Node.js server and wait until the Ghostery engine is ready."""
+        import urllib.error
+        import urllib.request
+
         with self._lock:
             if self._process is not None and self._process.poll() is None:
                 return self._stats
@@ -272,6 +278,8 @@ class GhosteryEngineClient:
     # ------------------------------------------------------------------ #
 
     def _request(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        import urllib.request
+
         if self._process is None or self._port is None:
             raise GhosteryEngineError("Ghostery backend is not running")
 

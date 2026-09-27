@@ -42,7 +42,6 @@ from typing import Callable, Optional
 from bfsb.core.search.policy import is_official_host, rank_results
 from bfsb.core.search.shortcuts import ShortcutManager
 from urllib.parse import urlparse
-import httpx
 
 
 ProgressCallback = Callable[[dict[str, object]], None]
@@ -71,6 +70,13 @@ _http_client_lock = asyncio.Lock()
 async def get_client() -> httpx.AsyncClient:
     """Module-level shared httpx client."""
     global _http_client
+    # httpx costs ~0.27s to import and is only needed once a search
+    # actually runs, but this module is on the startup path via
+    # bfsb.core.server. Annotations above are strings under
+    # "from __future__ import annotations", so the name is only needed
+    # here.
+    import httpx
+
     if _http_client is not None:
         return _http_client
     async with _http_client_lock:
