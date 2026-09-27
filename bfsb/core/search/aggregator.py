@@ -37,8 +37,29 @@ import os
 import dataclasses
 import re
 import time
-from typing import Optional
+from typing import Callable, Optional
+
+from bfsb.core.search.policy import is_official_host, rank_results
+from bfsb.core.search.shortcuts import ShortcutManager
+from urllib.parse import urlparse
 import httpx
+
+
+ProgressCallback = Callable[[dict[str, object]], None]
+
+
+def _safe_result_url(value: object) -> Optional[str]:
+    try:
+        url = str(value or "").strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc or not parsed.hostname:
+            return None
+        parsed.port
+        if parsed.username or parsed.password:
+            return None
+        return url
+    except Exception:
+        return None
 
 
 # --- shared client lifecycle ------------------------------------------
@@ -131,11 +152,13 @@ async def hackernews_source(q: str) -> list[Result]:
         params={"query": q, "hitsPerPage": 8, "tags": "story"},
         label=HACKERNEWS,
     )
-    if err or not js:
+    if err:
+        raise RuntimeError(err)
+    if not js:
         return []
     results: list[Result] = []
     for h in (js.get("hits") or [])[:8]:
-        url = h.get("url") or h.get("story_url") or ""
+        url = _safe_result_url(h.get("url") or h.get("story_url") or "")
         title = h.get("title") or h.get("story_title") or "(untitled)"
         if not url:
             continue
@@ -171,11 +194,13 @@ async def searxng_source(q: str) -> list[Result]:
         },
         label=SEARXNG,
     )
-    if err or not js:
+    if err:
+        raise RuntimeError(err)
+    if not js:
         return []
     results: list[Result] = []
     for r in (js.get("results") or [])[:8]:
-        url = (r.get("url") or "").strip()
+        url = _safe_result_url(r.get("url") or "")
         title = (r.get("title") or "").strip()
         content = (r.get("content") or "").strip()
         if not url or not title:
@@ -195,30 +220,47 @@ async def searxng_source(q: str) -> list[Result]:
 
 # --- aggregator -----------------------------------------------------------
 
-async def aggregate_search(query: str, *, max_total_ms: int = 8000) -> AggregateResponse:
+async def aggregate_search(
+    query: str,
+    *,
+    max_total_ms: int = 8000,
+    progress: Optional[ProgressCallback] = None,
+) -> AggregateResponse:
     t0 = time.perf_counter()
 
-    async def timed(coro, label="src"):  # PERF-DEBUG(phase1): label param added
-        _t = time.perf_counter()  # PERF-DEBUG(phase1)
+    def emit(event: str, source: str, **values: object) -> None:
+        if progress is None:
+            return
+        payload: dict[str, object] = {"event": event, "source": source}
+        payload.update(values)
+        try:
+            progress(payload)
+        except Exception:
+            pass
+
+    async def timed(coro, label="src"):
+        _t = time.perf_counter()
+        emit("engine_start", label)
         try:
             out = await asyncio.wait_for(coro, timeout=max_total_ms / 1000)
-            # PERF-DEBUG(phase1): per-source latency
+            elapsed_ms = (time.perf_counter() - _t) * 1000
+            count = len(out) if out is not None else 0
+            emit("engine_done", label, ms=round(elapsed_ms, 1), n=count)
             if os.environ.get("BFSB_PERF") == "1":
-                print(f"[PERF] source {label}: {(time.perf_counter()-_t)*1000:.1f}ms items={len(out) if out is not None else 'TIMEOUT'}", flush=True)
+                print(f"[PERF] source {label}: {elapsed_ms:.1f}ms items={count}", flush=True)
             return out
         except asyncio.TimeoutError:
+            emit("error", label, message=f"timeout after {max_total_ms}ms")
             if os.environ.get("BFSB_PERF") == "1":
-                print(f"[PERF] source {label}: TIMEOUT >{max_total_ms}ms", flush=True)  # PERF-DEBUG(phase1)
+                print(f"[PERF] source {label}: TIMEOUT >{max_total_ms}ms", flush=True)
             return None
+        except Exception as exc:
+            emit("error", label, message=f"{type(exc).__name__}: {exc}")
+            return exc
 
-    # SearXNG is the primary web-search source. HackerNews is a bonus
-    # (different kind of result: recent stories / discussions). The legacy
-    # Wikipedia + DDG Instant sources were removed because they only ever
-    # returned Wikipedia article URLs and knowledge-graph stubs, never
-    # the real web pages the user wanted.
     searxng_res, hn_res = await asyncio.gather(
-        timed(searxng_source(query), label=SEARXNG),      # PERF-DEBUG(phase1)
-        timed(hackernews_source(query), label=HACKERNEWS),  # PERF-DEBUG(phase1)
+        timed(searxng_source(query), label=SEARXNG),
+        timed(hackernews_source(query), label=HACKERNEWS),
     )
 
     errors: dict[str, str] = {}
@@ -251,13 +293,31 @@ async def aggregate_search(query: str, *, max_total_ms: int = 8000) -> Aggregate
             seen.add(key)
             merged.append(r)
 
-    for i, r in enumerate(merged, 1):
+    official_url = None
+    try:
+        hit = ShortcutManager().lookup(query)
+        official_url = hit.url if hit else None
+    except Exception:
+        pass
+
+    ranked, _ = rank_results(query, merged, official_url=official_url)
+    if official_url and not any(
+        is_official_host(r.url, official_url) for r in ranked
+    ):
+        ranked.insert(0, Result(
+            url=official_url,
+            title=f"{query} — official site",
+            snippet="Direct link from your BFSB shortcut list.",
+            source="shortcut",
+        ))
+
+    for i, r in enumerate(ranked, 1):
         r.rank = i
 
     total_ms = int((time.perf_counter() - t0) * 1000)
     return AggregateResponse(
         query=query,
-        results=merged,
+        results=ranked,
         total_ms=total_ms,
         errors=errors,
     )
