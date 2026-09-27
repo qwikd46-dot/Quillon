@@ -198,8 +198,8 @@ class BraveAdBlockEngine:
                     result[key] = jsonPrune(json[key], paths);
                 }
             }
-            return result;
         }
+        return result;
     };
 
     // override-property-read: Override property reads
@@ -342,9 +342,12 @@ class BraveAdBlockEngine:
         try:
             # Get URL-specific resources (includes scriptlets)
             resources = self._engine.url_cosmetic_resources(url)
-            scriptlets = getattr(resources, "scriptlets", [])
+            scriptlets = getattr(resources, "injected_script", "")
             if scriptlets:
-                return "\n".join(scriptlets)
+                return str(scriptlets)
+            legacy_scriptlets = getattr(resources, "scriptlets", [])
+            if legacy_scriptlets:
+                return "\n".join(str(scriptlet) for scriptlet in legacy_scriptlets)
         except Exception:
             pass
         return ""

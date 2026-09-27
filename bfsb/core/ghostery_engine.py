@@ -17,6 +17,26 @@ class GhosteryEngineError(RuntimeError):
     """Raised when the Ghostery Node.js backend is unavailable or unhealthy."""
 
 
+def _die_with_parent() -> None:
+    """Ask the kernel to kill this child when its parent dies.
+
+    atexit does not run on SIGTERM, and a Python signal handler does not
+    run at all while Qt's C++ event loop is blocking, so neither can be
+    relied on. PR_SET_PDEATHSIG needs no cooperation from the parent's
+    exit path: the kernel reaps the child the moment BFSB is gone, for
+    any reason -- normal quit, signal, crash or a hard kill.
+    """
+    try:
+        import ctypes
+        import signal
+
+        PR_SET_PDEATHSIG = 1
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+    except Exception:
+        pass  # best effort; atexit and the signal path still apply
+
+
 class GhosteryEngineClient:
     """Persistent Node.js subprocess exposing the Ghostery AdBlocker engine.
 
@@ -95,8 +115,17 @@ class GhosteryEngineClient:
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
+                # Own process group, so stop() can take the whole tree down.
+                # Without this a Node child that forked would survive.
+                start_new_session=True,
+                preexec_fn=_die_with_parent,
             )
             self._port = port
+            # Nothing in the app called stop(), so every BFSB exit left one
+            # Node process behind; seventy-one had accumulated, all
+            # reparented to systemd --user because their parent had gone.
+            # atexit covers a normal quit, an exception, and sys.exit alike.
+            self._register_atexit()
 
             # Drain both pipes so Node can never deadlock on a full buffer.
             drain_args = [
@@ -159,6 +188,60 @@ class GhosteryEngineClient:
         except Exception:
             pass
 
+    def _register_atexit(self) -> None:
+        """Guarantee the Node process dies with this one.
+
+        The app has no other shutdown path for it: the browser is closed
+        from the window, the tray and the launcher, and a hard exit must
+        not be the only thing that ever cleans this up.
+        """
+        import atexit
+
+        process = self._process
+        if process is None:
+            return
+
+        def _cleanup() -> None:
+            try:
+                self._kill_tree(process)
+            except Exception:
+                pass
+
+        atexit.register(_cleanup)
+
+    @staticmethod
+    def _kill_tree(process: "subprocess.Popen[str]") -> None:
+        """Terminate the engine and anything it forked."""
+        if process.poll() is not None:
+            return
+        try:
+            import os as _os
+            import signal as _signal
+
+            _os.killpg(_os.getpgid(process.pid), _signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                process.terminate()
+            except Exception:
+                return
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            try:
+                import os as _os
+                import signal as _signal
+
+                _os.killpg(_os.getpgid(process.pid), _signal.SIGKILL)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            try:
+                process.wait(timeout=2.0)
+            except Exception:
+                pass
+
     def stop(self) -> None:
         """Stop the Node.js backend process."""
         with self._lock:
@@ -167,12 +250,7 @@ class GhosteryEngineClient:
             self._port = None
             self._stats = {}
             if process is not None and process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5.0)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=2.0)
+                self._kill_tree(process)
             for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
                 try:
                     if stream:

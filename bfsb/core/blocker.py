@@ -362,6 +362,7 @@ YOUTUBE_SCRIPTLET = r"""
         'compansionAds', 'promotedSparklesWebRenderer',
         // 2024+ additions
         'instreamAd', 'instreamAdBreak', 'adBreakHeartbeatParams',
+        'backoffTimeMs', 'backoffTime', 'backoffMs',
         'adPlacementData', 'adVideoTransition', 'bypassedPlayerAds',
         'bypassedAdSlots', 'adSignals', 'adVideoMetadata',
         // ad-renderer types (any object containing these is an ad)
@@ -610,7 +611,7 @@ YOUTUBE_SCRIPTLET = r"""
         'ytd-companion-ad-renderer', 'ytd-video-masthead-ad-primary-renderer',
         'ytd-video-masthead-ad-advertiser-info-renderer',
         'ytd-video-masthead-ad-video-renderer', 'ytd-search-pyv-renderer',
-        'ytd-reel-shelf-renderer', '.masthead-ad-control',
+        '.masthead-ad-control',
         '#player-ads', '.ytp-ad-interstitial', '.ytp-ad-simple-ad-badge',
         '.ytp-ad-image-overlay', '.ytp-ad-preview-container',
         '.ytp-ad-notification-container', '.yt-mealbar-promo-renderer',
@@ -829,9 +830,6 @@ class URLBlocker:
         except GhosteryEngineError as exc:
             self._ghostery_error = str(exc)
             print(f"[Adblock] Failed to initialise Ghostery backend: {exc}")
-        except Exception as exc:
-            self._ghostery_error = str(exc)
-            print(f"[Adblock] Unexpected error initialising Ghostery backend: {exc}")
         except Exception as exc:
             self._ghostery_error = str(exc)
             print(f"[Adblock] Unexpected error initialising Ghostery backend: {exc}")
