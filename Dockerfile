@@ -96,21 +96,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         valkey-server \
     && rm -rf /var/lib/apt/lists/*
 
+# The dependency cache, brought in before anything that can use it. vendor/
+# is populated by scripts/cache_deps.sh; only .gitkeep is committed, so a
+# plain clone still copies successfully and simply has no wheels to use.
+COPY vendor/ /tmp/vendor/
+
 # SearXNG is not meaningfully packaged on PyPI (the 0.1.2 wheel there is
 # a 26 kB placeholder), so it is installed from source the same way the
-# upstream image does it.
+# upstream image does it. A cached source tree is used when present.
 ARG SEARXNG_REF=master
-RUN git clone --depth 1 --branch "${SEARXNG_REF}" \
-        https://github.com/searxng/searxng.git /usr/local/searxng \
+RUN set -eux; \
+    if [ -d /tmp/vendor/searxng ] && [ -f /tmp/vendor/searxng/setup.py ]; then \
+        echo "installing SearXNG from the cached source tree"; \
+        cp -a /tmp/vendor/searxng /usr/local/searxng; \
+    else \
+        echo "cloning SearXNG (${SEARXNG_REF})"; \
+        git clone --depth 1 --branch "${SEARXNG_REF}" \
+            https://github.com/searxng/searxng.git /usr/local/searxng; \
+    fi
+RUN set -eux; cd /usr/local/searxng; \
     # searx's setup.py imports the package itself (searx/__init__.py ->
     # msgspec, setup.py -> yaml), so its own runtime requirements have to
     # be importable before pip can even work out its metadata.
     # --no-build-isolation stops pip from hiding them in an overlay that
-    # does not have them.
-    && pip install --no-cache-dir -r /usr/local/searxng/requirements.txt \
-    && pip install --no-cache-dir setuptools wheel \
-    && pip install --no-cache-dir --no-build-isolation /usr/local/searxng \
-    && rm -rf /usr/local/searxng/.git
+    # does not have them. The wheelhouse is offered as a preferred source
+    # but not made exclusive: it holds BFSB's dependency set, not all of
+    # SearXNG's, so --no-index would fail here.
+    pip install --no-cache-dir --find-links=/tmp/vendor/wheels \
+        -r /usr/local/searxng/requirements.txt; \
+    pip install --no-cache-dir --find-links=/tmp/vendor/wheels setuptools wheel; \
+    pip install --no-cache-dir --no-build-isolation /usr/local/searxng; \
+    rm -rf /usr/local/searxng/.git
 
 # Node runtime for the ad-block engine. Debian's nodejs is new enough for
 # the engine (>= 18); the engine itself lives in the repo and installs its
@@ -124,7 +140,13 @@ WORKDIR /opt/bfsb
 # PyQt6 and PyQt6-WebEngine are abi3 wheels, so they resolve for 3.14.
 COPY pyproject.toml ./
 COPY bfsb/__init__.py ./bfsb/__init__.py
-RUN pip install --no-cache-dir \
+
+# vendor/ is the dependency cache, populated by scripts/cache_deps.sh. It is
+# not committed. --find-links makes pip prefer a cached wheel and fall back
+# to the network for anything the cache does not hold, so a plain clone with
+# no cache builds exactly as before. The tree is copied once, before
+# SearXNG, and torn down after npm has used its half.
+RUN pip install --no-cache-dir --find-links=/tmp/vendor/wheels \
         "PyQt6>=6.6.0" \
         "PyQt6-WebEngine>=6.6.0" \
         "aiohttp>=3.9.0" \
@@ -139,7 +161,6 @@ RUN pip install --no-cache-dir \
         "adblock>=0.6.0" \
         "mitmproxy>=12.2.3" \
         gunicorn
-
 # The application itself.
 COPY bfsb/ ./bfsb/
 COPY ghostery-adblocker/ ./ghostery-adblocker/
@@ -147,9 +168,17 @@ COPY package.json package-lock.json ./
 COPY bfsb_supervisor.py bfsb_launcher.sh ./
 
 # The ad-block engine's node dependencies. node_modules is not committed,
-# so this is the step a fresh clone used to be missing.
-RUN npm install --no-audit --no-fund --omit=dev \
-    && npm cache clean --force
+# so this is the step a fresh clone used to be missing. A warmed npm cache
+# makes this offline when scripts/cache_deps.sh has run.
+RUN set -eux; \
+    if [ -d /tmp/vendor/npm-cache ] && [ -n "$(ls -A /tmp/vendor/npm-cache 2>/dev/null)" ]; then \
+        npm install --cache /tmp/vendor/npm-cache --prefer-offline \
+            --no-audit --no-fund --omit=dev; \
+    else \
+        npm install --no-audit --no-fund --omit=dev; \
+    fi; \
+    rm -rf /tmp/vendor; \
+    npm cache clean --force
 
 # Unprivileged runtime user. The vault writes its key file under $HOME,
 # so that directory has to exist and be owned before the drop.

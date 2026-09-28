@@ -1,0 +1,78 @@
+name: build and publish the image
+
+# Publishing on every push is the point: it is what makes
+#   podman pull ghcr.io/qwikd46-dot/bfsb
+# give a clone a fully-built image with every package already installed,
+# instead of a 2 GB build.
+#
+# The token is GitHub's own -- no personal access token is needed and none
+# is stored in the repository. It can only push packages belonging to this
+# repository, which is why `packages: write` is requested explicitly.
+
+on:
+  push:
+    branches: [main, "feat/**"]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      # The wheelhouse is the expensive part of the build. Caching it means
+      # a rebuild only redoes the layers whose inputs actually changed.
+      - name: Cache the dependency cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/wheels
+          key: wheels-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'package-lock.json') }}
+          restore-keys: wheels-${{ runner.os }}-
+
+      - name: Populate the dependency cache
+        run: ./scripts/cache_deps.sh
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

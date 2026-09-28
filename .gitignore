@@ -35,3 +35,10 @@ data/index.db
 data/index.db-shm
 data/index.db-wal
 data/crawled/
+
+# Dependency cache populated by scripts/cache_deps.sh. Deliberately not
+# committed: it is a mirror of PyPI and npm, and it is large. The directory
+# itself is kept (via .gitkeep) so the Dockerfile's COPY always resolves on a
+# plain clone; the build works with or without the contents.
+vendor/*
+!vendor/.gitkeep

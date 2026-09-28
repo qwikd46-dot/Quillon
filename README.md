@@ -216,6 +216,46 @@ parents, escalating to `SIGKILL` after a grace period, and reaps everything.
 Verified: a running container goes from 13 processes to none, leaving no
 orphaned `mitmdump` or `node` behind.
 
+### The dependency cache
+
+`scripts/cache_deps.sh` downloads everything the build needs once, into
+`vendor/` — pip wheels, the npm cache, and optionally the SearXNG source tree.
+The Dockerfile installs from it with `--find-links`, so cached wheels are
+preferred and anything the cache does not hold falls back to the network. A
+plain clone with no cache builds exactly as it always did.
+
+```bash
+./scripts/cache_deps.sh                        # into ./vendor
+BFSB_CACHE_DIR=~/.cache/bfsb ./scripts/cache_deps.sh   # somewhere persistent
+BFSB_CACHE_SEARXNG=1 ./scripts/cache_deps.sh   # include the SearXNG clone
+```
+
+If the cache lives outside the repository, the script symlinks `vendor/` to it
+so the build context can still reach it. `vendor/.gitkeep` is the only thing
+committed — the cache is a mirror of PyPI and npm and has no business in
+history.
+
+The npm half installs into a throwaway directory on purpose. Running
+`npm install` in the repository is a no-op when `node_modules` already exists,
+which would leave the cache empty on exactly the machines that would benefit
+from it.
+
+### Pulling a prebuilt image instead of building
+
+A push to `main` publishes the image to GitHub Container Registry via
+`.github/workflows/docker-image.yml`, using GitHub's own `GITHUB_TOKEN` — there
+is no personal access token to configure and nothing secret in the repository.
+So a clone does not have to build 2 GB of image:
+
+```bash
+podman pull ghcr.io/qwikd46-dot/Bfsb:main
+podman run --rm -it -e BFSB_HEADLESS=1 bfsb   # after `podman tag`
+```
+
+The workflow caches `vendor/wheels` between runs, so even the build it does is
+mostly cached. If the package shows as private, run `podman login ghcr.io` with
+a GitHub token that has `read:packages` once.
+
 ### Seeing the window
 
 `BFSB_HEADLESS=1` (the default) runs the GUI against an in-container Xvfb, which
