@@ -26,6 +26,7 @@ Secrets: AES-GCM vault, root key in the OS keyring, scoped per install
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Running](#running)
+- [Running in a container](#running-in-a-container)
 - [Testing](#testing)
 - [Performance](#performance)
 - [Security model](#security-model)
@@ -157,6 +158,117 @@ Useful runtime state:
 | `~/.bfsb/adblock_cache/` | cached filter lists |
 | `~/.bfsb/logs/ghostery-engine.log` | ad-block engine log |
 | `~/.bfsb/proxy-startup.log` | proxy startup errors (were previously `/dev/null`) |
+
+---
+
+## Running in a container
+
+BFSB ships as a single image containing everything it needs: the Qt/WebEngine
+UI, the mitmdump ad-block proxy, the Node Ghostery engine, and SearXNG. Nothing
+is left to install on the host.
+
+```bash
+podman build -t bfsb .          # or: docker build -t bfsb .
+podman compose up -d bfsb
+podman compose logs -f bfsb
+podman compose down
+```
+
+Plain podman/docker works too:
+
+```bash
+podman run --rm -it \
+  -e BFSB_HEADLESS=1 \
+  -v bfsb-data:/home/binwalk/.bfsb \
+  bfsb
+```
+
+### What "one process" means here, precisely
+
+The container has **one entry point**: `bfsb_supervisor.py` is PID 1 and owns
+the whole stack. The children are necessarily separate OS processes — SearXNG is
+its own WSGI application, mitmdump is a proxy server with its own event loop, and
+the ad-block engine is a Node program that cannot be a Python thread. What you
+get from the supervisor is that you start and stop **one thing**, and that
+nothing survives it:
+
+```
+supervisor (pid 1)
+  +-- Xvfb
+  +-- SearXNG            127.0.0.1:8888
+  +-- bfsb.main          127.0.0.1:8889   (the Qt app)
+  |    +-- mitmdump      127.0.0.1:8228
+  |    +-- node engine   ephemeral
+  +-- expose-ui          optional, see below
+  +-- expose-proxy
+```
+
+The supervisor starts the display, SearXNG and the browser. It deliberately does
+**not** start the mitmdump proxy or the Node engine, because the application
+already owns both — `proxy_bootstrap` starts mitmdump with a pid file keyed to
+the port and its owning process, and the Ghostery engine runs with
+`PR_SET_PDEATHSIG`. Starting a second copy from the supervisor would fight that
+lifecycle and reintroduce the "closing one instance kills another's proxy" class
+of bug.
+
+On `SIGTERM` the supervisor stops the tree in reverse order, children before
+parents, escalating to `SIGKILL` after a grace period, and reaps everything.
+Verified: a running container goes from 13 processes to none, leaving no
+orphaned `mitmdump` or `node` behind.
+
+### Seeing the window
+
+`BFSB_HEADLESS=1` (the default) runs the GUI against an in-container Xvfb, which
+is what you want on a server or in CI. To draw on the host's display instead:
+
+```bash
+xhost +si:localuser:$(id -un)          # on the host, once per session
+BFSB_HEADLESS=0 DISPLAY=:0 podman run --rm -it \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro bfsb
+```
+
+Note this needs `--device` or a privileged-ish setup on some hosts, and that
+exposing an X socket to a container is a real trust decision — the container can
+read your keystrokes. Prefer headless for anything you do not trust.
+
+### Ports
+
+Published ports **do not work by default**, and the compose file says so. The app
+binds `127.0.0.1` deliberately, and inside a container loopback is the
+container's own namespace, not the host's — so `-p 8889:8889` forwards to
+nothing.
+
+Set `BFSB_EXPOSE=1` to have the supervisor start a `socat` forwarder per port,
+bound to the container's own address (not the wildcard, which podman's publisher
+already holds). The container is fully self-contained either way; this only
+buys you the ability to reach the UI and proxy from the host.
+
+```bash
+BFSB_EXPOSE=1 podman run --rm -p 127.0.0.1:8889:8889 -p 127.0.0.1:8228:8228 bfsb
+```
+
+### The vault loses the keyring in a container
+
+This is the one real security cost, and it is not a bug:
+
+```
+keyring backend : Keyring        (no Secret Service / D-Bus to talk to)
+storage mode    : file-degraded
+degraded        : True
+```
+
+The OS keyring needs a session bus that a container does not have, so the vault
+falls back to a `0600` key file at `~/.bfsb/vault.key`. Your records are still
+AES-GCM encrypted, but **the key is now on disk** rather than protected by the
+platform's credential store. Two consequences:
+
+- The `bfsb-data` volume holds the key as well as the ciphertext. Treat it as
+  secret material, not as a cache.
+- If you care about key-at-rest, run BFSB on the host (where the keyring works)
+  rather than in a container.
+
+Chromium's own cookie store is a separate matter and is still plaintext wherever
+it runs — see [Known limitations](#known-limitations).
 
 ---
 
