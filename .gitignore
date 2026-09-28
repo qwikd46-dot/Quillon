@@ -42,3 +42,10 @@ data/crawled/
 # plain clone; the build works with or without the contents.
 vendor/*
 !vendor/.gitkeep
+
+# searxng-git is a nested git checkout of SearXNG's AUR packaging. It was
+# committed as a gitlink (mode 160000) with no .gitmodules entry, which makes
+# `actions/checkout` fail with "No url found for submodule path" and took the
+# whole image build down with it. Nothing references it: the image clones
+# SearXNG itself. Kept on disk, out of the index.
+searxng-/searxng-git/
