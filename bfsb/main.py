@@ -7,6 +7,55 @@ import os
 import sys
 from pathlib import Path
 
+
+def _check_platform() -> None:
+    """Refuse to start anywhere but Linux, with a reason.
+
+    BFSB is Linux-only for now. The parts that would break elsewhere are
+    small but load-bearing rather than incidental: the proxy and the
+    ad-block engine are reaped with PR_SET_PDEATHSIG, the proxy's live-pid
+    check reads /proc/<pid>/cmdline, and process groups are torn down with
+    os.killpg. On Windows or macOS those degrade into a crash somewhere
+    deep in proxy lifecycle handling, or -- worse -- into an orphaned
+    proxy that holds port 8228 with no parent to clean it up.
+
+    Failing here, with an explanation, beats either. The container image
+    runs the same Linux code under any host, so anyone on another OS is
+    better served by that; this message says so.
+
+    BFSB_ALLOW_UNSUPPORTED_PLATFORM=1 overrides the check, for anyone
+    porting it who wants to see how far it gets.
+    """
+    if sys.platform.startswith("linux"):
+        return
+    if os.environ.get("BFSB_ALLOW_UNSUPPORTED_PLATFORM") == "1":
+        print(
+            "[bfsb] BFSB_ALLOW_UNSUPPORTED_PLATFORM is set; continuing on "
+            f"{sys.platform} at your own risk",
+            file=sys.stderr,
+        )
+        return
+    raise SystemExit(
+        f"BFSB supports Linux only, and this is {sys.platform}.\n"
+        "\n"
+        "The browser, the ad-blocking proxy and the encrypted vault are\n"
+        "Linux-only for now. Everything they need is in the container\n"
+        "image, which runs on any host:\n"
+        "\n"
+        "    podman pull ghcr.io/qwikd46-dot/bfsb:main\n"
+        "\n"
+        "To port it yourself, set BFSB_ALLOW_UNSUPPORTED_PLATFORM=1 and "
+        "expect\nbfsb/core/proxy_bootstrap.py, proxy_manager.py and "
+        "ghostery_engine.py to need work."
+    )
+
+
+# Checked here, at the top of the module, rather than inside main(). The
+# proxy bootstrap below runs at import time -- importing this module
+# starts mitmdump on 8228 -- so a check inside main() would let a
+# non-Linux machine spawn a proxy that nothing can then reap.
+_check_platform()
+
 # Platform: prefer Wayland (we're on Hyprland), fall back to X11.
 # On pure X11 the env is already correct; on Wayland we want the Wayland
 # platform plugin to avoid the silent-fail when XCB has no DISPLAY.

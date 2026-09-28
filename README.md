@@ -6,6 +6,12 @@ privacy and password panels — from a local `aiohttp` server, and pairs that wi
 local metasearch and an ad-blocking proxy so browsing and searching do not have
 to go through a third party.
 
+> **Linux only.** The browser, the ad-block proxy and the encrypted vault are
+> Linux-only for now; the app refuses to start elsewhere rather than half-work.
+> The reasons are in [Known limitations](#known-limitations). If you are on
+> Windows or macOS, the [container image](#running-in-a-container) runs the
+> same Linux code on any host and is the supported path.
+
 ```
 BFSB  (PyQt6 / Qt WebEngine)
  |
@@ -412,6 +418,18 @@ and expiry. That is a project, not a wiring fix. Until then, the store is mode
 **Blocking falls back silently.** If the Ghostery engine fails to start, the
 browser still runs on the DNS blocklist alone. The reason is logged to
 `~/.bfsb/logs/ghostery-engine.log`, but nothing surfaces it in the UI yet.
+
+**Linux only.** The proxy is reaped with `PR_SET_PDEATHSIG`, its live-pid check
+reads `/proc/<pid>/cmdline`, and process groups are torn down with
+`os.killpg`. Those are not incidental details — without them the proxy can
+outlive the browser and hold port 8228 with nothing left to clean it up, which
+is the bug the lifecycle work fixed. `bfsb/main.py` therefore refuses to start
+on Windows or macOS and says so, instead of degrading into a crash inside
+proxy handling. `BFSB_ALLOW_UNSUPPORTED_PLATFORM=1` overrides the check for
+anyone porting it; `bfsb/core/proxy_bootstrap.py`, `proxy_manager.py` and
+`ghostery_engine.py` are the three files that would need work. Run the
+[container](#running-in-a-container) instead — it is the same code, on any
+host.
 
 **One machine, one user.** The proxy, the SearXNG container and the launcher all
 assume a single-user desktop session.
