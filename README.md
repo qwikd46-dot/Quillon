@@ -313,8 +313,9 @@ platform's credential store. Two consequences:
 - If you care about key-at-rest, run BFSB on the host (where the keyring works)
   rather than in a container.
 
-Chromium's own cookie store is a separate matter and is still plaintext wherever
-it runs — see [Known limitations](#known-limitations).
+Chromium's own cookie store is a separate matter, and is now handled the same
+way everywhere: not persisted by default. See
+[Known limitations](#known-limitations).
 
 ---
 
@@ -404,16 +405,38 @@ original key in place.
 
 ## Known limitations
 
-**Cookies are still stored in plaintext.** Qt's own cookie store
-(`~/.local/share/bfsb/cookie_storage/Cookies`) holds ~20 unencrypted session
-cookies, and is not currently purged. Mirroring cookies into the encrypted vault
-is the obvious fix and is *not* implemented: `QNetworkCookie.name()` returns a
-`QByteArray`, which is neither `bytes` nor `bytearray`, so a naive port stores
-every name as the literal `b'sid'`, private-profile detection needs
-`isOffTheRecord()` (not the method that was originally used), deletions do not
-propagate, and doing it properly needs a schema change storing name, value, flags
-and expiry. That is a project, not a wiring fix. Until then, the store is mode
-`0600` and readable only by you.
+**Cookies are not persisted at all, by default.** Qt WebEngine 6.11 exposes no
+cookie-encryption API, and a profile with no `os_crypt` key has Chromium write
+every cookie value verbatim into a SQLite table on disk — readable with a
+one-line query by anyone who can read the profile. The earlier plan to mirror
+cookies into the encrypted vault was reverted (it corrupted every cookie name,
+because `QNetworkCookie` accessors return `QByteArray` whose `str()` is the
+repr; it wrote incognito cookies into the long-lived vault; and deletions never
+propagated).
+
+So the control is not "encrypt them ourselves" but **do not write them at
+all**: `NoPersistentCookies` is the default. The cost is real and worth stating
+— you are logged out of everything when the browser closes.
+
+If you want sessions, opt in:
+
+```bash
+BFSB_PERSIST_COOKIES=1 ./bfsb_launcher.sh
+```
+
+That also writes an `os_crypt` key into the profile's `Local State` first, so
+those cookies are encrypted rather than plaintext. The key is generated with
+`secrets`, never written to disk in the clear, and held in the OS keyring; the
+profile keeps only the wrapped form, so it stays portable without carrying the
+key with it. **That part is best effort** — it relies on Chromium accepting the
+legacy `v10` key format, which is not verified against this build, so treat it
+as defence in depth rather than as the guarantee. The guarantee is the default
+not persisting. If the key cannot be created, BFSB says so loudly at startup
+rather than falling back to plaintext silently.
+
+Existing plaintext cookies were purged. `tests/test_chromium_crypt.py` asserts
+the policy default and the key format, and tests the plaintext detector against
+a real cookie table so it cannot pass vacuously.
 
 **Blocking falls back silently.** If the Ghostery engine fails to start, the
 browser still runs on the DNS blocklist alone. The reason is logged to

@@ -1306,19 +1306,34 @@ def create_web_profile(private: bool = False) -> QWebEngineProfile:
         else QWebEngineProfile.HttpCacheType.DiskHttpCache
     )
     profile.setHttpCacheType(cache_type)
-    # RESTORED after a failed experiment. Qt persists cookies itself; the
-    # encrypted vault is NOT used for cookies. An attempt to mirror them
-    # was reverted because it corrupted every cookie name (QNetworkCookie
-    # accessors return QByteArray, whose str() is the repr), wrote
-    # incognito cookies into the long-lived vault, and never propagated
-    # deletions -- so no session survived a restart while the plaintext
-    # store kept working. See the cookie-vault audit.
+    # Cookies. Qt persists them itself; the encrypted vault is NOT used
+    # for them. An attempt to mirror them into the vault was reverted
+    # because it corrupted every cookie name (QNetworkCookie accessors
+    # return QByteArray, whose str() is the repr), wrote incognito
+    # cookies into the long-lived vault, and never propagated deletions.
+    #
+    # So the control is not "encrypt them ourselves" but "do not write
+    # them at all". Qt WebEngine 6.11 has no cookie-encryption API, and
+    # with no os_crypt key in the profile Chromium stores every cookie
+    # value verbatim in a SQLite table on disk. Not persisting is the only
+    # option that does not depend on Chromium internals.
+    #
+    # The cost is real: you are logged out of everything when the browser
+    # closes. BFSB_PERSIST_COOKIES=1 opts into persistence, and then
+    # chromium_crypt gives the profile an os_crypt key first so those
+    # cookies are encrypted rather than plaintext. That path is best
+    # effort -- see chromium_crypt's docstring.
+    persist_cookies = (
+        not private
+        and os.environ.get("BFSB_PERSIST_COOKIES") == "1"
+    )
     cookie_policy = (
-        QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies
-        if private
-        else QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+        QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+        if persist_cookies
+        else QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies
     )
     profile.setPersistentCookiesPolicy(cookie_policy)
+
     if private or os.environ.get("BFSB_BLOCK_THIRD_PARTY_COOKIES") == "1":
         try:
             profile.cookieStore().setCookieFilter(_block_third_party_cookie)
@@ -1335,6 +1350,24 @@ def create_web_profile(private: bool = False) -> QWebEngineProfile:
         cookie_storage.chmod(0o700)
         if hasattr(profile, "setPersistentStoragePath"):
             profile.setPersistentStoragePath(str(cookie_storage))
+        # Only reachable when the operator explicitly opted into
+        # persistence, and only after the storage path is set, because
+        # that is the directory whose Local State Chromium will read.
+        if persist_cookies:
+            from .chromium_crypt import ChromiumCryptError, write_local_state
+            try:
+                if write_local_state(cookie_storage):
+                    print("[Adblock] profile os_crypt key installed; cookies "
+                          "on disk are encrypted")
+                else:
+                    print("[Adblock] WARNING: cookies will be persisted but no "
+                          "os_crypt key could be created (no OS keyring?), so "
+                          "Chromium will store them in PLAINTEXT. Unset "
+                          "BFSB_PERSIST_COOKIES to stop persisting them at all.")
+            except ChromiumCryptError as error:
+                print(f"[Adblock] WARNING: no os_crypt key ({error}); cookies "
+                      "will be persisted in PLAINTEXT. Unset "
+                      "BFSB_PERSIST_COOKIES to stop persisting them at all.")
     default_user_agent = ""
     if hasattr(profile, "httpUserAgent"):
         try:
