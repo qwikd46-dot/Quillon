@@ -57,6 +57,14 @@ jobs:
 
       # The wheelhouse is the expensive part of the build. Caching it means
       # a rebuild only redoes the layers whose inputs actually changed.
+      #
+      # It is best-effort, and it is not that it is optional: the runner's
+      # python3 is 3.12, so the wheels it downloads are cp312 while the
+      # image is python:3.14. pip matches on wheel tags, so it ignores
+      # them and fetches the right ones. The npm cache has no such
+      # problem, which is why this step is still worth running here.
+      # Running scripts/cache_deps.sh on a 3.14 interpreter does produce a
+      # wheelhouse the image can actually use.
       - name: Cache the dependency cache
         uses: actions/cache@v4
         with:
@@ -65,6 +73,7 @@ jobs:
           restore-keys: wheels-${{ runner.os }}-
 
       - name: Populate the dependency cache
+        continue-on-error: true
         run: ./scripts/cache_deps.sh
 
       - name: Build and push

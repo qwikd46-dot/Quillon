@@ -96,7 +96,6 @@ fetch_npm() {
     local out="$CACHE_DIR/npm"
     local work
     work="$(mktemp -d)"
-    trap 'rm -rf "$work"' RETURN
     mkdir -p "$out"
     log "populating the npm cache at $out"
 
@@ -105,10 +104,15 @@ fetch_npm() {
     # exactly the machines that would benefit from it. Installing into a
     # throwaway directory forces the real download while leaving the
     # working tree alone.
+    #
+    # Cleanup is explicit rather than a `trap ... RETURN`: that fires when
+    # the variable is already out of scope, which under `set -u` is a fatal
+    # "work: unbound variable" after the cache has already been written.
     cp "$REPO_ROOT/package.json" "$REPO_ROOT/package-lock.json" "$work/" 2>/dev/null \
         || cp "$REPO_ROOT/package.json" "$work/"
     ( cd "$work" && npm ci --cache "$out/npm-cache" --no-audit --no-fund --omit=dev ) \
         || ( cd "$work" && npm install --cache "$out/npm-cache" --no-audit --no-fund --omit=dev )
+    rm -rf "$work"
 
     local size entries
     size="$(du -sh "$out" 2>/dev/null | cut -f1)"
