@@ -520,30 +520,70 @@ the run did not touch live user state.
 
 ## Copyright and licence
 
+Quillon is licensed under the **Mozilla Public License 2.0**.
+
 ```
 Copyright (c) 2026 Binwalk
-All rights reserved.
+Licensed under the Mozilla Public License, v. 2.0.
 ```
 
-Quillon is the work of **Binwalk**, who owns this repository and holds the
-copyright in the original material authored in this project's history, including
-the vault, search, proxy and browser work.
+The full text is in [`LICENSE`](LICENSE). In short, and in the terms that
+actually matter:
 
-This file is proprietary. No licence is granted to copy, modify, distribute or
-sublicense it except under a separate written agreement with the copyright
-holder. All other rights are reserved.
+- You may use, modify and redistribute Quillon, including commercially.
+- Modifications **to Quillon's own files** must be released under MPL-2.0
+  and must be made available with the source.
+- Larger works may combine Quillon with proprietary code; the copyleft
+  does not spread past the files you changed.
+- The notice above must be preserved in copies.
+- There is no warranty, and the contributors accept no liability for use.
+
+Quillon is the work of **Binwalk**, who owns this repository and holds the
+copyright in the original material authored in this project's history,
+including the vault, search, proxy and browser work.
+
+### Why MPL-2.0
+
+Not MIT, which would let the whole thing be closed-sourced wholesale.
+Not AGPL, whose network clause protects a hosted service that does not
+apply here — Quillon ships as a local desktop application, not as
+something people run on someone else's server. Not GPL, which is heavier
+on contributors than this project needs. MPL-2.0 is file-level copyleft:
+nobody can take Quillon private, but a patch that only touches a
+contributor's own file stays as permissive as they want it to be. It is
+also the licence of the vendored Ghostery engine under
+`ghostery-adblocker/`, so the two now agree.
+
+If you need different terms — a permissive licence, a dual licence, or a
+commercial exception — open an issue and say so.
 
 ### Contributions and prior authors
 
 Git history records contributions from more than one person, and those
-contributions are not covered by the statement above. The repository's root
-commit (`fb4a21f`, 2026-07-08) was authored by **DEV-COLLABOR
-<fou16461@gmail.com>**, and nine commits carry GitHub Copilot as author.
-Contributor tooling that omits an author from a commit's metadata does not
-remove their copyright in that commit.
+contributions are not covered by the copyright statement above. The
+repository's root commit (`fb4a21f`, 2026-07-08) was authored by
+**DEV-COLLABOR <fou16461@gmail.com>**, and nine commits carry GitHub Copilot
+as author. Under MPL-2.0 a contribution keeps its author's copyright and is
+licensed to the project on submission; contributor tooling that omits an
+author from a commit's metadata does not remove their copyright in it.
 
-If you contributed to this repository and your work is not reflected in the
-copyright notice above, open an issue and it will be corrected.
+If you contributed and your work is not reflected above, open an issue and
+it will be corrected.
+
+### Third-party components
+
+Quillon bundles code under other licences, which are unaffected by this
+one and governed by the notices in their own directories:
+
+| Component | Licence |
+|---|---|
+| `ghostery-adblocker/` (Ghostery AdBlocker + filter lists) | MPL-2.0, and the lists' own terms — see `quillon/core/search/data/SOURCES.md` |
+| Qt / Qt WebEngine / PyQt6 | LGPL-3.0 and GPL-2.0-or-3.0, as distributed |
+| mitmproxy | MIT |
+| SearXNG (run separately, not bundled) | AGPL-3.0 |
+
+`node_modules/` and `vendor/` are installed at build time and are not
+part of this repository.
 
 ---
 
