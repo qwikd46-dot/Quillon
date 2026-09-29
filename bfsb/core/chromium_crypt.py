@@ -253,3 +253,56 @@ def cookies_stored_in_plaintext(profile_dir: Path) -> list[str]:
             conn.close()
         return [r[0] for r in rows]
     return []
+
+
+def report(profile_dir: Optional[Path] = None) -> dict:
+    """What is actually on disk, for the --check-cookie-encryption flag.
+
+    A key being present in Local State is not evidence of anything. This
+    reports what is in the cookie database itself, which is the only
+    question that matters.
+    """
+    if profile_dir is None:
+        profile_dir = Path.home() / ".local" / "share" / "bfsb" / "cookie_storage"
+    return {
+        "profile_dir": str(profile_dir),
+        "has_key": has_os_crypt_key(profile_dir),
+        "plaintext_cookies": cookies_stored_in_plaintext(profile_dir),
+        "keyring": _keyring_description(),
+    }
+
+
+def _keyring_description() -> str:
+    keyring = _keyring_module()
+    if keyring is None:
+        return "not installed"
+    try:
+        return type(keyring.get_keyring()).__name__
+    except Exception:
+        return "unavailable"
+
+
+def format_report(profile_dir: Optional[Path] = None) -> str:
+    state = report(profile_dir)
+    plain = state["plaintext_cookies"]
+    lines = [
+        "BFSB cookie storage check",
+        f"  profile directory : {state['profile_dir']}",
+        f"  os_crypt key      : {'present' if state['has_key'] else 'absent'}",
+        f"  OS keyring        : {state['keyring']}",
+    ]
+    if plain:
+        lines += [
+            "",
+            f"  !! {len(plain)} cookie(s) are stored in PLAINTEXT:",
+            *[f"     - {name}" for name in plain[:20]],
+        ]
+        lines += [
+            "",
+            "  Chromium is not encrypting this profile. Either its build",
+            "  ignores the os_crypt key, or the cookies predate it.",
+            "  Unset BFSB_PERSIST_COOKIES to stop persisting cookies at all.",
+        ]
+    else:
+        lines += ["", "  OK: no plaintext cookie values on disk."]
+    return "\n".join(lines)

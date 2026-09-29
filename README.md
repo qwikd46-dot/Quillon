@@ -424,15 +424,35 @@ If you want sessions, opt in:
 BFSB_PERSIST_COOKIES=1 ./bfsb_launcher.sh
 ```
 
-That also writes an `os_crypt` key into the profile's `Local State` first, so
-those cookies are encrypted rather than plaintext. The key is generated with
-`secrets`, never written to disk in the clear, and held in the OS keyring; the
-profile keeps only the wrapped form, so it stays portable without carrying the
-key with it. **That part is best effort** — it relies on Chromium accepting the
-legacy `v10` key format, which is not verified against this build, so treat it
-as defence in depth rather than as the guarantee. The guarantee is the default
-not persisting. If the key cannot be created, BFSB says so loudly at startup
-rather than falling back to plaintext silently.
+That writes an `os_crypt` key into the profile's `Local State` first, so those
+cookies *should* be encrypted. The key is generated with `secrets`, never
+written to disk in the clear, and held in the OS keyring; the profile keeps only
+the wrapped form, so it stays portable without carrying the key.
+
+**Measured result: it does not work on this build.** Against Qt WebEngine 6.11
+the key was written to `Local State` and Chromium then stored cookie values
+verbatim anyway — `encrypted_value` came back zero bytes against two test
+cookies whose `value` columns held their plaintext. Whether a given Chromium
+build honours the key depends on it, so BFSB does not claim it does. Check
+yourself at any time:
+
+```bash
+./bfsb_launcher.sh --check-cookie-encryption     # or: python3 -m bfsb.main --check-cookie-encryption
+```
+
+```
+BFSB cookie storage check
+  profile directory : /home/you/.local/share/bfsb/cookie_storage
+  os_crypt key      : present
+  OS keyring        : ChainerBackend
+
+  OK: no plaintext cookie values on disk.
+```
+
+It reads the cookie database itself, because "the key is present" is evidence
+of nothing — that is precisely the claim that turned out to be false. If it
+reports plaintext cookies, **unset `BFSB_PERSIST_COOKIES`**, which is the
+setting that actually guarantees anything.
 
 Existing plaintext cookies were purged. `tests/test_chromium_crypt.py` asserts
 the policy default and the key format, and tests the plaintext detector against

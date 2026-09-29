@@ -151,6 +151,23 @@ class KeyWrappingTests(unittest.TestCase):
     def test_has_os_crypt_key_is_false_without_one(self):
         self.assertFalse(self.mod.has_os_crypt_key(self.root))
 
+    def test_the_report_names_plaintext_cookies(self):
+        """A key being present must never make the report say OK."""
+        self.mod.write_local_state(self.root, self.mod.generate_master_key())
+        make_cookie_db(self.root / "Cookies", [
+            (".x.com", "sid", "PLAINTEXT", b""),
+        ])
+        state = self.mod.report(self.root)
+        self.assertTrue(state["has_key"])
+        self.assertEqual(state["plaintext_cookies"], ["sid"])
+        self.assertIn("PLAINTEXT", self.mod.format_report(self.root))
+
+    def test_the_report_is_clean_with_no_cookies(self):
+        self.mod.write_local_state(self.root, self.mod.generate_master_key())
+        state = self.mod.report(self.root)
+        self.assertEqual(state["plaintext_cookies"], [])
+        self.assertIn("no plaintext cookie values", self.mod.format_report(self.root))
+
 
 def base64_of(raw: bytes) -> str:
     import base64

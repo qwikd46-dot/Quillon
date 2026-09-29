@@ -103,20 +103,29 @@ if os.environ.get("BFSB_TEST") == "1":
 # which rewrites /youtubei/v1/* responses and strips ad placements BEFORE the
 # page sees them (undetectable by anti-adblock checks). Fail-safe: if the
 # proxy cannot start, no proxy flags are set and browsing works as before.
-try:
-    from bfsb.core.proxy_bootstrap import ensure_proxy_running
-    _proxy = ensure_proxy_running()
-    if _proxy:
-        _port, _spki = _proxy
-        _chromium_flags += (
-            f" --proxy-server=http://127.0.0.1:{_port}"
-            f" --ignore-certificate-errors-spki-list={_spki}"
-        )
-        print(f"[BFSB] Network ad-block proxy active on 127.0.0.1:{_port}")
-    else:
-        print("[BFSB] Proxy unavailable - running without network ad-block")
-except Exception as _e:
-    print(f"[BFSB] Proxy bootstrap failed: {_e}")
+#
+# A read-only diagnostic must not spawn a proxy, so the bootstrap is skipped
+# when one of those is asked for.
+_DIAGNOSTIC_ONLY = any(
+    flag in sys.argv for flag in ("--check-cookie-encryption", "--version")
+)
+if _DIAGNOSTIC_ONLY:
+    _proxy = None
+else:
+    try:
+        from bfsb.core.proxy_bootstrap import ensure_proxy_running
+        _proxy = ensure_proxy_running()
+        if _proxy:
+            _port, _spki = _proxy
+            _chromium_flags += (
+                f" --proxy-server=http://127.0.0.1:{_port}"
+                f" --ignore-certificate-errors-spki-list={_spki}"
+            )
+            print(f"[BFSB] Network ad-block proxy active on 127.0.0.1:{_port}")
+        else:
+            print("[BFSB] Proxy unavailable - running without network ad-block")
+    except Exception as _e:
+        print(f"[BFSB] Proxy bootstrap failed: {_e}")
 
 _existing_chromium_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
 if _existing_chromium_flags:
@@ -158,6 +167,11 @@ from bfsb.ui import BFSBWindow
 
 def main() -> int:
     """Application entry point."""
+    if "--check-cookie-encryption" in sys.argv:
+        from bfsb.core.chromium_crypt import format_report
+        print(format_report())
+        return 0
+
     PATHS.ensure_dirs()
     blocker = URLBlocker()
 

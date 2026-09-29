@@ -1357,13 +1357,22 @@ def create_web_profile(private: bool = False) -> QWebEngineProfile:
             from .chromium_crypt import ChromiumCryptError, write_local_state
             try:
                 if write_local_state(cookie_storage):
-                    print("[Adblock] profile os_crypt key installed; cookies "
-                          "on disk are encrypted")
+                    # Deliberately does not claim the cookies are
+                    # encrypted. Measured against this build (Qt WebEngine
+                    # 6.11), Chromium wrote the os_crypt key to Local State
+                    # and then stored cookie values verbatim anyway:
+                    # encrypted_value came back zero bytes. Whether a given
+                    # build honours the key depends on it, so BFSB says the
+                    # key is in place and leaves the claim to the checker.
+                    print("[Adblock] profile os_crypt key written. NOTE: this "
+                          "is only honoured by some Chromium builds -- verify "
+                          "with 'bfsb --check-cookie-encryption' before "
+                          "trusting it.")
                 else:
-                    print("[Adblock] WARNING: cookies will be persisted but no "
-                          "os_crypt key could be created (no OS keyring?), so "
-                          "Chromium will store them in PLAINTEXT. Unset "
-                          "BFSB_PERSIST_COOKIES to stop persisting them at all.")
+                    print("[Adblock] WARNING: no os_crypt key could be created "
+                          "(no OS keyring reachable), so cookies will be "
+                          "persisted in PLAINTEXT. Unset BFSB_PERSIST_COOKIES "
+                          "to stop persisting them at all.")
             except ChromiumCryptError as error:
                 print(f"[Adblock] WARNING: no os_crypt key ({error}); cookies "
                       "will be persisted in PLAINTEXT. Unset "

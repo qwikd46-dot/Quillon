@@ -63,6 +63,16 @@ fi
 # BFSB's own UI server lives on 127.0.0.1:8889 (see bfsb/core/server.py).
 # ---------------------------------------------------------------------------
 BFSB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# Read-only diagnostics must not start SearXNG or the proxy just to print a
+# report. Handle them here, before any service comes up.
+for _arg in "$@"; do
+    if [ "$_arg" = "--check-cookie-encryption" ]; then
+        cd "$BFSB_DIR"
+        exec python3 -m bfsb.main "$@"
+    fi
+done
+
 BFSB_RUNTIME_DIR="$HOME/.bfsb"
 mkdir -p "$BFSB_RUNTIME_DIR"
 BFSB_CHECKUP="$BFSB_DIR/bfsb_checkup.sh"
