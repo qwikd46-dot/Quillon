@@ -1,4 +1,4 @@
-# Quillon — Browser for Safe Browsing
+# Quillon Browser
 
 A privacy-focused desktop browser built on PyQt6 / Qt WebEngine. It ships its own
 entire interface — home page, search results, bookmarks, history, downloads,

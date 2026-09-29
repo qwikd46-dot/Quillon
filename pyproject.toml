@@ -1,7 +1,7 @@
 [project]
 name = "quillon"
 version = "1.0.0"
-description = "Quillon — Browser for Safe Browsing"
+description = "Quillon Browser"
 requires-python = ">=3.12"
 dependencies = [
     "PyQt6>=6.6.0",

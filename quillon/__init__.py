@@ -1,4 +1,4 @@
-"""Quillon — Browser for Safe Browsing.
+"""Quillon Browser.
 
 A privacy-focused browser built on Qt WebEngine with local metasearch engine.
 
