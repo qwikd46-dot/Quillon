@@ -30,6 +30,23 @@ node_modules/
 *.log
 quillon_checkup.sh.lock
 
+# One-off debugging scratch, kept on disk but never in history. These are
+# throwaway scripts that poke at a running instance, not part of the
+# project; committing them makes the rename and the test suite noisier
+# for no benefit.
+find_brace.py
+verify_fix.py
+verify_script.py
+test_css.py
+test_playwright.py
+test_tab_animations.py
+screenshots/
+
+# Stale file from before the Quillon work: a 675-line main_window.py
+# snapshot dated Jul 8 that predates all of it and is not the current
+# implementation. Predates the rename, kept on disk, out of the index.
+quillon/ui/main_window.py.my_changes
+
 # Generated local search index (rebuilt by the crawler)
 data/index.db
 data/index.db-shm
