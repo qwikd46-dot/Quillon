@@ -182,6 +182,8 @@ class QuillonHBServer:
         app.router.add_post('/api/ui/newTab', self.handle_api_new_tab)
         app.router.add_post('/api/ui/closeTab', self.handle_api_close_tab)
         app.router.add_post('/api/ui/switchTab', self.handle_api_ui_switch_tab)
+        app.router.add_post('/api/ui/reorderTabs', self.handle_api_ui_reorder_tabs)
+        app.router.add_post('/api/ui/sidebarCollapsed', self.handle_api_ui_sidebar_collapsed)
         # Adblocker state shared with the proxy/mitmdump layer (adblock_state.py).
         app.router.add_get('/api/adblock', self.handle_api_adblock_get)
         app.router.add_post('/api/adblock', self.handle_api_adblock_set)
@@ -754,6 +756,62 @@ class QuillonHBServer:
             if main is None:
                 return False
             main.switch_tab(index)
+            return True
+
+        try:
+            ok = await self._run_on_qt_async(_do)
+            return web.json_response({"ok": bool(ok)})
+        except Exception:
+            return web.json_response({"ok": False}, status=503)
+
+    async def handle_api_ui_reorder_tabs(self, request: Request) -> Response:
+        """Reorder tabs from a drag in the in-page interface.
+
+        Tab reordering used the quillon:// action channel only, and that
+        channel cannot carry a fetch from this page: Chromium refuses to
+        load a local-scheme resource from the http:// UI origin, so every
+        drop logged "Not allowed to load local resource" and did nothing.
+        Every other in-page action already prefers an HTTP route and keeps
+        the scheme as a fallback; this brings tab reordering in line.
+        """
+        try:
+            payload = await request.json()
+            from_index = int(payload.get("from"))
+            to_index = int(payload.get("to"))
+        except (TypeError, ValueError, AttributeError):
+            return web.json_response({"ok": False}, status=400)
+
+        def _do(main):
+            if main is None:
+                return False
+            main.reorder_tabs(from_index, to_index)
+            return True
+
+        try:
+            ok = await self._run_on_qt_async(_do)
+            return web.json_response({"ok": bool(ok)})
+        except Exception:
+            return web.json_response({"ok": False}, status=503)
+
+    async def handle_api_ui_sidebar_collapsed(self, request: Request) -> Response:
+        """Record a sidebar collapse toggled from inside the page.
+
+        The page could only reach the window through the quillon:// action
+        channel, which cannot carry a fetch from this origin, and no
+        handler for the name existed either -- so a collapse done in the
+        page never reached Python and was never persisted to
+        sidebar-state.json.
+        """
+        try:
+            payload = await request.json()
+            collapsed = bool(payload.get("state"))
+        except (TypeError, ValueError, AttributeError):
+            return web.json_response({"ok": False}, status=400)
+
+        def _do(main):
+            if main is None:
+                return False
+            main._set_sidebar_collapsed(collapsed)
             return True
 
         try:
@@ -1343,6 +1401,7 @@ class QuillonHBServer:
         "closeTab": "close_tab",
         "switchTab": "switch_tab",
         "reorderTabs": "reorder_tabs",
+        "sidebarCollapsed": "_set_sidebar_collapsed",
         "toggleSideOverlay": "_toggle_side_overlay",
         "showMainMenu": "_show_main_menu",
     }

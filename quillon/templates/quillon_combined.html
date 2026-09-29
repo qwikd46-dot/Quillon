@@ -1862,7 +1862,11 @@
       const toIndex = Number(target.dataset.index);
       if (toIndex !== draggedTabIndex) {
         suppressTabClick = true;
-        quillonAction('quillon://reorderTabs?from=' + draggedTabIndex + '&to=' + toIndex);
+        void htmlUiAction(
+          '/api/ui/reorderTabs',
+          {from: draggedTabIndex, to: toIndex},
+          'quillon://reorderTabs?from=' + draggedTabIndex + '&to=' + toIndex
+        );
         // A completed HTML5 drop does not fire a click, so nothing would
         // ever clear this flag and the NEXT click on a tab -- or on its
         // close button, since the guard is the first statement -- was
@@ -1970,7 +1974,11 @@
     sidebarLogo.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
     sidebarLogo.querySelector('svg path').setAttribute('d', collapsed ? 'M9 18l6-6-6-6' : 'M15 18l-6-6 6-6');
     try { localStorage.setItem('quillon-sidebar-collapsed', collapsed ? '1' : '0'); } catch(e) {}
-    if (notify) quillonAction('quillon://sidebarCollapsed?state=' + (collapsed ? '1' : '0'));
+    if (notify) void htmlUiAction(
+      '/api/ui/sidebarCollapsed',
+      {state: collapsed ? 1 : 0},
+      'quillon://sidebarCollapsed?state=' + (collapsed ? '1' : '0')
+    );
   }
   function toggleSidebar() {
     applySidebarState(!sidebar.classList.contains('collapsed'), true);
