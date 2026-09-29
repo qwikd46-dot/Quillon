@@ -9,7 +9,7 @@ down instead of failing one request.
 import unittest
 
 try:
-    import bfsb.core.webengine as webengine
+    import quillon.core.webengine as webengine
 except Exception:  # pragma: no cover
     webengine = None
 
@@ -32,10 +32,10 @@ class VirtualGuardTests(unittest.TestCase):
             setattr(cls, name + "_impl", original)
 
     def test_accept_navigation_request_refuses_instead_of_raising(self):
-        self._break(webengine.BFSBPage, "acceptNavigationRequest")
-        page = webengine.BFSBPage.__new__(webengine.BFSBPage)
+        self._break(webengine.QuillonPage, "acceptNavigationRequest")
+        page = webengine.QuillonPage.__new__(webengine.QuillonPage)
         self.assertIs(
-            webengine.BFSBPage.acceptNavigationRequest(page, None, 0, True), False
+            webengine.QuillonPage.acceptNavigationRequest(page, None, 0, True), False
         )
 
     def test_intercept_request_returns_none(self):
@@ -45,16 +45,16 @@ class VirtualGuardTests(unittest.TestCase):
         )
 
     def test_create_window_returns_none(self):
-        self._break(webengine.BFSBPage, "createWindow")
-        page = webengine.BFSBPage.__new__(webengine.BFSBPage)
-        self.assertIsNone(webengine.BFSBPage.createWindow(page, None))
+        self._break(webengine.QuillonPage, "createWindow")
+        page = webengine.QuillonPage.__new__(webengine.QuillonPage)
+        self.assertIsNone(webengine.QuillonPage.createWindow(page, None))
 
     def test_every_risky_virtual_is_wrapped(self):
         for cls, name in (
             (webengine.RequestInterceptor, "interceptRequest"),
             (webengine.SafePage, "acceptNavigationRequest"),
-            (webengine.BFSBPage, "acceptNavigationRequest"),
-            (webengine.BFSBPage, "createWindow"),
+            (webengine.QuillonPage, "acceptNavigationRequest"),
+            (webengine.QuillonPage, "createWindow"),
         ):
             with self.subTest(cls=cls.__name__, name=name):
                 self.assertEqual(

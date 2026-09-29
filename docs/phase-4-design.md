@@ -7,7 +7,7 @@ The native bar, hamburger, context-menu fallback, and external overlay are wired
 - **Qt chrome bar** (`browser_chrome.py`, shown only on external sites): `← → ⟳` ghost
   buttons, pill `QLineEdit` (`#141933`, border `#232a4a`, radius 20, 14 px), star
   `☆/★`, **⋮ menu button**.
-- **HTML address bar** (Home/Results, `bfsb_combined.html`): same pill colors/radius
+- **HTML address bar** (Home/Results, `quillon_combined.html`): same pill colors/radius
   but with a **search icon** on the left inside the pill, **bookmark icon** inside the
   pill (fills violet when bookmarked), **lock icon** on the right, and the nav buttons
   sit *outside* the pill on the left; the whole row is optically centered with a
@@ -33,7 +33,7 @@ fills; Qt toggles via star glyph — visually different), row alignment.
   screenshots show drift).
 
 ### 4b. Universal sidebar (Home, Results, and while browsing)
-- The HTML sidebar stays the single implementation for BFSB pages (Home/Results).
+- The HTML sidebar stays the single implementation for Quillon pages (Home/Results).
 - While browsing external sites, a **native Qt sidebar overlay** slides over the
   webview: same 232 px collapsed→64 px behavior, same palette/tokens
   (`#0a0e1a`, `#7b5cff` accent, same items: Home, Bookmarks, History, Downloads,
@@ -42,17 +42,17 @@ fills; Qt toggles via star glyph — visually different), row alignment.
   far left of the Qt search bar** (since the ⋮ is removed).
   - Panel items reuse the menu/panel routing that exists (`home_url#panel`,
     `_open_panel`), so Bookmarks/History/Downloads/Settings behave identically.
-  - "Home" item navigates the current tab to the BFSB GUI.
+  - "Home" item navigates the current tab to the Quillon GUI.
   - Adblocker toggle in the overlay calls the same `/api/adblock` endpoint.
 - One navigation model: same items, same order, same actions in HTML sidebar (own
   pages) and native overlay (external sites).
 
 ## Files touched
-- `bfsb/ui/browser_chrome.py` (pill rebuild, icons, hamburger, remove menu button)
-- `bfsb/ui/main_window.py` (wire hamburger → overlay; remove menu-button wiring;
+- `quillon/ui/browser_chrome.py` (pill rebuild, icons, hamburger, remove menu button)
+- `quillon/ui/main_window.py` (wire hamburger → overlay; remove menu-button wiring;
   `_show_main_menu` kept only for the context-menu fallback)
-- new `bfsb/ui/side_overlay.py` (native overlay sidebar)
-- `bfsb/templates/bfsb_combined.html` (alignment polish only, if screenshots demand)
+- new `quillon/ui/side_overlay.py` (native overlay sidebar)
+- `quillon/templates/quillon_combined.html` (alignment polish only, if screenshots demand)
 
 ## Risks
 - Overlay must not steal focus/keys from the page (non-modal, click-outside closes).

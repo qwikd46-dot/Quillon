@@ -63,7 +63,7 @@ def package(build_dir: Path, output: Path) -> tuple[Path, Path]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Package a Chromium build")
     parser.add_argument("--build-dir", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=Path("dist/bfsb-chromium.tar.gz"))
+    parser.add_argument("--output", type=Path, default=Path("dist/quillon-chromium.tar.gz"))
     args = parser.parse_args()
     try:
         output, checksum = package(args.build_dir, args.output)

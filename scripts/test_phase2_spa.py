@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from bfsb_cdp import CDP
+from quillon_cdp import CDP
 
 
 async def run():

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Declarative BFSB UI check runner.
+"""Declarative Quillon UI check runner.
 
 Each check is (name, action, assertion). `action(cdp)` performs a mouse/JS
 interaction. `assertion(cdp)` returns True/False (truthy means pass).
 
 Examples are the home-page checks. Add new checks by appending to CHECKS.
 
-Run from headless-test.sh; can also be invoked directly while BFSB is up.
+Run from headless-test.sh; can also be invoked directly while Quillon is up.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from bfsb_cdp import CDP  # noqa: E402
+from quillon_cdp import CDP  # noqa: E402
 
 SCREENSHOTS = Path(__file__).parent / "screenshots"
 SCREENSHOTS.mkdir(parents=True, exist_ok=True)
@@ -33,7 +33,7 @@ async def _maybe_await(v):
 
 async def startup(cdp):
     """Wait for the home page to render."""
-    return await cdp.wait_for("document.title && document.title.includes('BFSB')", timeout=15)
+    return await cdp.wait_for("document.title && document.title.includes('Quillon')", timeout=15)
 
 
 async def home_search_input_present(cdp):
@@ -61,7 +61,7 @@ async def type_in_search_box(cdp):
         "(async ()=>{"
         "  const el=document.querySelector('#searchInput');"
         "  if(!el) return null;"
-        "  el.value='bfsb';"
+        "  el.value='quillon';"
         "  el.dispatchEvent(new Event('input',{bubbles:true}));"
         "  return el.value;"
         "})()"
@@ -91,15 +91,15 @@ async def click_inside_close_button_closes_modal(cdp):
     """Click inside the .btn-close element (a child node), and verify the
     modal closes. Exercises the closest('.btn-close') fallback. Skips
     cleanly when the home modal isn't rendered (the live app uses a
-    native Qt AboutDialog, so bfsb_home.html isn't served — yet we still
+    native Qt AboutDialog, so quillon_home.html isn't served — yet we still
     test the file as the user asked for it)."""
     has_modal = await cdp.eval('!!document.getElementById("aboutModal")')
     if not has_modal:
-        # Run the equivalent test against the source of bfsb_home.html so
+        # Run the equivalent test against the source of quillon_home.html so
         # the regression coverage travels with the file regardless of
         # whether it's wired into the live template.
         from pathlib import Path
-        src = Path("/home/zon/bfsb/bfsb/templates/bfsb_home.html").read_text()
+        src = Path("/home/zon/quillon/quillon/templates/quillon_home.html").read_text()
         if 'e.target.closest(".btn-close")' in src:
             return True
         if 'classList.contains("btn-close")' in src and 'closest(".btn-close")' not in src:
@@ -130,7 +130,7 @@ async def click_inside_close_button_closes_modal(cdp):
 
 async def search_stays_on_local_url(cdp):
     """User typing in the search box must keep the URL bar on our
-    origin and produce a BFSB-themed page (NOT a 302 to duckduckgo.com
+    origin and produce a Quillon-themed page (NOT a 302 to duckduckgo.com
     and NOT a duckduckgo-branded HTML body).
 
     Drives the search by simulating a click on the search button.
@@ -143,7 +143,7 @@ async def search_stays_on_local_url(cdp):
             return None
     opener = urllib.request.build_opener(_NoRedirect())
     try:
-        opener.open("http://127.0.0.1:8889/search?q=bfsb", timeout=5)
+        opener.open("http://127.0.0.1:8889/search?q=quillon", timeout=5)
         route = "no_redirect"
         print(f"[check] search_stays_on_local_url: server returned 200 (no redirect)", file=sys.stderr)
     except urllib.error.HTTPError as e:
@@ -182,7 +182,7 @@ async def search_stays_on_local_url(cdp):
     html = await cdp.eval("document.body.innerHTML.toLowerCase()")
     if "duckduckgo" in html:
         return f"ddg_visible_in_render:{url}"
-    # Extra: verify a BFSB-styled result tile (empty-results class) is present
+    # Extra: verify a Quillon-styled result tile (empty-results class) is present
     if "empty-results" not in html and "result-item" not in html:
         return "no_results_tile_in_dom"
     # 3. Verify at least one result has a real (non-local) URL and non-empty title
@@ -267,11 +267,11 @@ CHECKS = [
     {"name": "search input #searchInput present",     "action": home_search_input_present,      "assert": None},
     {"name": "about link #aboutLink present",         "action": home_about_link_present,        "assert": None},
     {"name": "initial screenshot captured",           "action": take_initial_screenshot,        "assert": None},
-    {"name": "type 'bfsb' into search input",         "action": type_in_search_box,             "assert": lambda v: v == "bfsb"},
+    {"name": "type 'quillon' into search input",         "action": type_in_search_box,             "assert": lambda v: v == "quillon"},
     {"name": "open About modal",                      "action": open_about_modal,               "assert_cdp": lambda c: True},
     {"name": "click inside .btn-close closes modal",  "action": click_inside_close_button_closes_modal,
      "assert": lambda v: v is True or v == "MODAL_FILE_NOT_FOUND"},
-    {"name": "search stays on BFSB origin + no DDG",  "action": search_stays_on_local_url,
+    {"name": "search stays on Quillon origin + no DDG",  "action": search_stays_on_local_url,
      "assert": lambda v: v == "ok"},
 ]
 

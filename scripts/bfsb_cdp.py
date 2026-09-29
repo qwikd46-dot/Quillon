@@ -1,4 +1,4 @@
-"""Tiny CDP client for BFSB.
+"""Tiny CDP client for Quillon.
 
 Talks directly to QtWebEngine's embedded Chromium via Chrome DevTools Protocol.
 No Playwright, no Selenium. We just need:
@@ -8,12 +8,12 @@ No Playwright, no Selenium. We just need:
   - console error collection (CDP Runtime.consoleAPICalled)
 
 Usage:
-    from bfsb_cdp import CDP
+    from quillon_cdp import CDP
     async with CDP() as cdp:
         await cdp.eval("document.title")
         await cdp.screenshot("/tmp/shot.png")
         await cdp.click("button#newTabBtn")
-        await cdp.hover(".bfsb-tab")
+        await cdp.hover(".quillon-tab")
         errors = cdp.errors
 """
 
@@ -45,7 +45,7 @@ class Page:
 
 
 class CDP:
-    """One CDP session against the BFSB embedded browser's main target."""
+    """One CDP session against the Quillon embedded browser's main target."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = 9222):
         self.host = host
@@ -65,7 +65,7 @@ class CDP:
     # --- lifecycle ----------------------------------------------------
 
     async def __aenter__(self) -> "CDP":
-        # discover the default page (the BFSB embedded view shows up as the
+        # discover the default page (the Quillon embedded view shows up as the
         # first page target; ignore extension/background targets)
         url = f"http://{self.host}:{self.port}/json"
         pages = _fetch_json(url)
@@ -115,7 +115,7 @@ class CDP:
     async def refresh_pages(self) -> None:
         """Re-fetch the list of CDP page targets from the browser.
 
-        QtWebEngine registers a new page target every time BFSB opens
+        QtWebEngine registers a new page target every time Quillon opens
         a new QWebEngineView (tab). The initial snapshot in __aenter__
         only sees the first view; we re-poll here so tab-management
         checks can see new tabs.
@@ -205,7 +205,7 @@ class CDP:
     # --- send ---------------------------------------------------------
 
     def _dbg(self, msg: dict) -> None:
-        if not os.environ.get("BFSB_CDP_DEBUG"):
+        if not os.environ.get("QUILLON_CDP_DEBUG"):
             return
         mid = msg.get("id")
         method = msg.get("method")
@@ -220,7 +220,7 @@ class CDP:
         payload = {"id": mid, "method": method, "params": params or {}}
         fut = asyncio.get_event_loop().create_future()
         self._pending[mid] = fut
-        if os.environ.get("BFSB_CDP_DEBUG"):
+        if os.environ.get("QUILLON_CDP_DEBUG"):
             print(f"[cdp] → id={mid} method={method}", file=sys.stderr, flush=True)
         await self._ws.send(json.dumps(payload))
         try:
@@ -420,11 +420,11 @@ class CDP:
         subprocess.run(args, check=False, timeout=5)
 
     async def test_action(self, name: str, arg: Optional[str] = None) -> bool:
-        """Trigger a BFSB test action over the local HTTP server.
+        """Trigger a Quillon test action over the local HTTP server.
 
         Calls ``GET http://127.0.0.1:8889/test-action/{name}?arg={arg}``,
-        which the BFSB server dispatches to the MainWindow. The route
-        is only registered when BFSB_TEST=1 is in the server's env.
+        which the Quillon server dispatches to the MainWindow. The route
+        is only registered when QUILLON_TEST=1 is in the server's env.
         Returns True on HTTP 200, False otherwise. Faster and more
         reliable than ydotool under Xvfb.
 
@@ -448,10 +448,10 @@ class CDP:
         Returns a dict with keys ``menu_open``, ``bookmark_popover_open``,
         ``history_popover_open``, ``sidebar_open``, ``bookmark_count``,
         ``history_count``, ``view_count`` — all read on the Qt main
-        thread inside the BFSB process, so this is the source of truth
+        thread inside the Quillon process, so this is the source of truth
         for what the user would see on screen.
 
-        Returns None if the endpoint isn't available (BFSB_TEST not
+        Returns None if the endpoint isn't available (QUILLON_TEST not
         set, or the server didn't come up). Use ``None`` to mean
         "couldn't read state" — every consumer should treat None as
         a soft fail, not a verdict of "closed".

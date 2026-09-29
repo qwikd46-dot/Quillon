@@ -8,14 +8,14 @@ The managed-tab, reorder, close, and middle-click paths are wired.
 ### Diagnosis plan (instrument first — done before any fix)
 - Log every tab-creation call site with a traceback tag:
   `main_window.new_tab()` (one `print` at entry with a `site` label), and
-  `BFSBPage.createWindow()` in `webengine.py` (popups/target=_blank).
+  `QuillonPage.createWindow()` in `webengine.py` (popups/target=_blank).
 - Reproduce: launch → home → search → click a result → observe view_count + logs.
 
 ### Expected findings (from code reading; to be confirmed by the repro)
 1. `settings.openInNewTab` defaults **true** → the template turns every result click
-   into `fetch('bfsb://newTab?url=…')` → a new tab per click. The user perceives the
+   into `fetch('quillon://newTab?url=…')` → a new tab per click. The user perceives the
    result tab (plus their expectation of staying) as a "mystery extra tab".
-2. Sites opening `target=_blank`/`window.open` hit `BFSBPage.createWindow()` which
+2. Sites opening `target=_blank`/`window.open` hit `QuillonPage.createWindow()` which
    spawns a **separate OS popup window** (not a tab) — another surprise surface.
 
 ### Fix
@@ -36,8 +36,8 @@ template dropped it because tabs are Qt-owned. Restore end-to-end:
 
 - Template: re-add `draggable="true"` + dragstart/dragover/drop handlers on
   `#tabStrip .tab` (markup already carries `data-index` from Python sync).
-- New action: `bfsb://reorderTabs?from=I&to=J` → `BFSBSchemeHandler` → main window.
-- New `BFSBWindow.reorder_tabs(from, to)`: move `self._views[from]` → `to`, rebuild
+- New action: `quillon://reorderTabs?from=I&to=J` → `QuillonSchemeHandler` → main window.
+- New `QuillonWindow.reorder_tabs(from, to)`: move `self._views[from]` → `to`, rebuild
   `QStackedWidget` order (remove/re-insert widgets preserving current view), update
   `_sync_chrome_tabs()` + `_push_tabs_js()` (one logical change).
 - FLIP animation kept client-side (from the original design) after the sync push.
@@ -55,16 +55,16 @@ Extend the harness (headless, CDP + `/test-state`):
 | reorder | drag 0→2 with 3 tabs (assert order via titles) |
 
 Middle-click close is new: `mousedown`/`auxclick` with `button===1` on `.tab` →
-`bfsb://closeTab?index=N`; native side: `NativeTab.mousePressEvent` already emits
+`quillon://closeTab?index=N`; native side: `NativeTab.mousePressEvent` already emits
 clicked on left — extend for MiddleButton. Cover each cell in
   `scripts/test_tabs_phase3.py` (custom CDP harness driving `/test-state`).
 
 ## Files touched
-- `bfsb/templates/bfsb_combined.html` (DnD, middle-click, default setting)
-- `bfsb/core/webengine.py` (`createWindow` tab policy)
-- `bfsb/ui/main_window.py` (`reorder_tabs`, tab-creation logging)
-- `bfsb/core/webengine.py` `BFSBSchemeHandler` (reorderTabs action)
-- `bfsb/ui/browser_chrome.py` (middle-click on native tab)
+- `quillon/templates/quillon_combined.html` (DnD, middle-click, default setting)
+- `quillon/core/webengine.py` (`createWindow` tab policy)
+- `quillon/ui/main_window.py` (`reorder_tabs`, tab-creation logging)
+- `quillon/core/webengine.py` `QuillonSchemeHandler` (reorderTabs action)
+- `quillon/ui/browser_chrome.py` (middle-click on native tab)
 - `scripts/test_tabs_phase3.py` (new)
 
 ## Risks

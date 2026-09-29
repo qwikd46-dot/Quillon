@@ -1,5 +1,5 @@
 #!/bin/bash
-# BFSB Launcher
+# Quillon Launcher
 export DISPLAY=:0
 export QT_QPA_PLATFORM=xcb
 export QT_WEBENGINE_DISABLE_WAYLAND=1
@@ -18,7 +18,7 @@ if [ -d /usr/lib/qt6/plugins ]; then export QT_PLUGIN_PATH=/usr/lib/qt6/plugins;
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-if [ -x "$SCRIPT_DIR/bfsb_checkup.sh" ]; then
-    "$SCRIPT_DIR/bfsb_checkup.sh" --replace || true
+if [ -x "$SCRIPT_DIR/quillon_checkup.sh" ]; then
+    "$SCRIPT_DIR/quillon_checkup.sh" --replace || true
 fi
-exec python3 -m bfsb.main "$@"
+exec python3 -m quillon.main "$@"

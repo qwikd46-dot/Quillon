@@ -9,7 +9,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def _load(name, relpath):
-    stubbed = ("bfsb", "bfsb.core", "bfsb.core.search")
+    stubbed = ("quillon", "quillon.core", "quillon.core.search")
     saved = {n: sys.modules.get(n) for n in stubbed}
     for n in stubbed:
         stub = types.ModuleType(n)
@@ -29,11 +29,11 @@ def _load(name, relpath):
                 sys.modules[n] = previous
 
 
-safety = _load("bfsb_safety_test", "bfsb/core/search/safety.py")
+safety = _load("quillon_safety_test", "quillon/core/search/safety.py")
 
 
 class BlockedQueryTests(unittest.TestCase):
-    """What the BFSB search bar refuses before any provider is contacted."""
+    """What the Quillon search bar refuses before any provider is contacted."""
 
     def test_flagged_queries_are_classified(self):
         for value, expected in (
@@ -165,23 +165,23 @@ class BlockedQueryTests(unittest.TestCase):
     def test_disabled_by_env(self):
         import os
 
-        previous = os.environ.get("BFSB_YOUTUBE_STRICT_FILTER")
-        os.environ["BFSB_YOUTUBE_STRICT_FILTER"] = "0"
+        previous = os.environ.get("QUILLON_YOUTUBE_STRICT_FILTER")
+        os.environ["QUILLON_YOUTUBE_STRICT_FILTER"] = "0"
         try:
             self.assertFalse(safety.enabled())
         finally:
             if previous is None:
-                os.environ.pop("BFSB_YOUTUBE_STRICT_FILTER", None)
+                os.environ.pop("QUILLON_YOUTUBE_STRICT_FILTER", None)
             else:
-                os.environ["BFSB_YOUTUBE_STRICT_FILTER"] = previous
+                os.environ["QUILLON_YOUTUBE_STRICT_FILTER"] = previous
         self.assertTrue(safety.enabled())
 
 
 class TemplateContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.template = (ROOT / "bfsb/templates/bfsb_combined.html").read_text(encoding="utf-8")
-        cls.server = (ROOT / "bfsb/core/server.py").read_text(encoding="utf-8")
+        cls.template = (ROOT / "quillon/templates/quillon_combined.html").read_text(encoding="utf-8")
+        cls.server = (ROOT / "quillon/core/server.py").read_text(encoding="utf-8")
 
     def test_block_notice_markup_exists(self):
         self.assertIn('id="blockOverlay"', self.template)
@@ -236,7 +236,7 @@ class TemplateContractTests(unittest.TestCase):
         self.assertLess(block_at, navigate_at)
 
     def test_image_asset_is_shipped(self):
-        self.assertTrue((ROOT / "bfsb/templates/static/cheaky.png").is_file())
+        self.assertTrue((ROOT / "quillon/templates/static/cheaky.png").is_file())
 
 
 class ShippedDataTests(unittest.TestCase):
@@ -244,8 +244,8 @@ class ShippedDataTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.domains_path = ROOT / "bfsb/core/search/data/adult_domains.txt"
-        cls.labels_path = ROOT / "bfsb/core/search/data/adult_labels.txt"
+        cls.domains_path = ROOT / "quillon/core/search/data/adult_domains.txt"
+        cls.labels_path = ROOT / "quillon/core/search/data/adult_labels.txt"
 
     def test_data_files_are_present_and_large(self):
         self.assertTrue(self.domains_path.is_file())
@@ -256,7 +256,7 @@ class ShippedDataTests(unittest.TestCase):
         self.assertGreater(len(labels), 20_000)
 
     def test_provenance_is_documented(self):
-        readme = (ROOT / "bfsb/core/search/data/SOURCES.md").read_text(encoding="utf-8")
+        readme = (ROOT / "quillon/core/search/data/SOURCES.md").read_text(encoding="utf-8")
         self.assertIn("StevenBlack", readme)
         self.assertIn("someonewhocares.org", readme)
         self.assertIn("english-words", readme)
@@ -326,7 +326,7 @@ class GenericTokenRegressionTests(unittest.TestCase):
     contained a link was deleted from the feed."""
 
     def test_url_shaped_queries_are_not_blocked(self):
-        from bfsb.core.search import safety
+        from quillon.core.search import safety
 
         for query in (
             "https://github.com/torvalds/linux",
@@ -338,7 +338,7 @@ class GenericTokenRegressionTests(unittest.TestCase):
                 self.assertIsNone(safety.matched_term(query), query)
 
     def test_generic_tokens_are_not_in_the_shipped_labels(self):
-        from bfsb.core.search import safety
+        from quillon.core.search import safety
 
         for token in ("http", "https", "ftp", "www"):
             self.assertNotIn(token, safety._adult_labels, token)
@@ -346,7 +346,7 @@ class GenericTokenRegressionTests(unittest.TestCase):
         self.assertEqual(numeric, [], f"numeric labels block any year: {numeric[:8]}")
 
     def test_real_terms_are_still_blocked(self):
-        from bfsb.core.search import safety
+        from quillon.core.search import safety
 
         for query in ("pornhub.com", "porn", "free porn", "sextape"):
             with self.subTest(query=query):
@@ -358,14 +358,14 @@ class HomoglyphRegressionTests(unittest.TestCase):
     non-ASCII character split a token and matched nothing."""
 
     def test_diacritic_fullwidth_and_cyrillic_forms_are_blocked(self):
-        from bfsb.core.search import safety
+        from quillon.core.search import safety
 
         for query in ("pórn", "ｐｏｒｎ", "рorn", "pоrn", "ｓｅｘ", "pórnhub"):
             with self.subTest(query=query):
                 self.assertIsNotNone(safety.matched_term(query), query)
 
     def test_folding_does_not_break_ordinary_queries(self):
-        from bfsb.core.search import safety
+        from quillon.core.search import safety
 
         for query in ("https://github.com/torvalds/linux", "best github repositories"):
             with self.subTest(query=query):

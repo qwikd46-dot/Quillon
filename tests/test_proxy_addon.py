@@ -49,7 +49,7 @@ class FakeHTTPFlow:
 
 def load_addon():
     try:
-        return importlib.import_module("bfsb.core.proxy_addon")
+        return importlib.import_module("quillon.core.proxy_addon")
     except ModuleNotFoundError:
         package = types.ModuleType("mitmproxy")
         package.http = types.SimpleNamespace(Response=FakeResponse, HTTPFlow=FakeHTTPFlow)
@@ -64,14 +64,14 @@ def load_addon():
             spec.loader.exec_module(mod)
             return mod
 
-        path = root / "bfsb" / "core" / "proxy_addon.py"
-        spec = importlib.util.spec_from_file_location("bfsb_proxy_addon_test", path)
+        path = root / "quillon" / "core" / "proxy_addon.py"
+        spec = importlib.util.spec_from_file_location("quillon_proxy_addon_test", path)
         module = importlib.util.module_from_spec(spec)
 
         # proxy_addon imports the real filter; stub the package chain so the
-        # sibling module loads without pulling in the whole bfsb package.
+        # sibling module loads without pulling in the whole quillon package.
         # The stubs must stay in place until proxy_addon itself is executed.
-        stubbed = ("bfsb", "bfsb.core", "bfsb.core.search")
+        stubbed = ("quillon", "quillon.core", "quillon.core.search")
         saved = {name: sys.modules.get(name) for name in stubbed}
         for name in stubbed:
             stub = types.ModuleType(name)
@@ -79,13 +79,13 @@ def load_addon():
             sys.modules[name] = stub
         try:
             safety = _load_sibling(
-                "bfsb.core.search.safety", "bfsb/core/search/safety.py"
+                "quillon.core.search.safety", "quillon/core/search/safety.py"
             )
-            sys.modules["bfsb.core.search"].safety = safety
+            sys.modules["quillon.core.search"].safety = safety
             filter_module = _load_sibling(
-                "bfsb.core.youtube_filter", "bfsb/core/youtube_filter.py"
+                "quillon.core.youtube_filter", "quillon/core/youtube_filter.py"
             )
-            sys.modules["bfsb.core"].youtube_filter = filter_module
+            sys.modules["quillon.core"].youtube_filter = filter_module
             spec.loader.exec_module(module)
         finally:
             for name, previous in saved.items():
@@ -101,7 +101,7 @@ module = load_addon()
 
 class ProxyAddonTests(unittest.TestCase):
     def setUp(self):
-        self.addon = module.BFSBAdblockAddon()
+        self.addon = module.QuillonAdblockAddon()
 
     def test_typed_fake_responses(self):
         cases = [
@@ -154,7 +154,7 @@ class ProxyAddonTests(unittest.TestCase):
         self.assertTrue(payload["playbackContext"]["contentPlaybackContext"]["isInlinePlaybackNoAd"])
         self.assertEqual(payload["params"], "yAEB")
         self.assertEqual(flow.request.headers["Content-Length"], str(len(flow.request.content)))
-        self.assertTrue(flow.metadata["bfsb_no_ad_context"])
+        self.assertTrue(flow.metadata["quillon_no_ad_context"])
 
     def test_shorts_request_is_not_rewritten(self):
         body = json.dumps({
@@ -171,8 +171,8 @@ class ProxyAddonTests(unittest.TestCase):
         )
         self.addon.request(flow)
         self.assertEqual(flow.request.content, body)
-        self.assertNotIn("bfsb_no_ad_context", flow.metadata)
-        self.assertTrue(flow.metadata["bfsb_shorts_passthrough"])
+        self.assertNotIn("quillon_no_ad_context", flow.metadata)
+        self.assertTrue(flow.metadata["quillon_shorts_passthrough"])
 
     def test_shorts_player_request_is_not_rewritten(self):
         body = json.dumps({
@@ -195,7 +195,7 @@ class ProxyAddonTests(unittest.TestCase):
         )
         self.addon.request(flow)
         self.assertEqual(flow.request.content, body)
-        self.assertTrue(flow.metadata["bfsb_shorts_passthrough"])
+        self.assertTrue(flow.metadata["quillon_shorts_passthrough"])
 
     def test_shorts_player_response_preserves_streaming_url(self):
         flow = FakeHTTPFlow(
@@ -206,7 +206,7 @@ class ProxyAddonTests(unittest.TestCase):
                 {"content-type": "application/json"},
             ),
         )
-        flow.metadata["bfsb_shorts_passthrough"] = True
+        flow.metadata["quillon_shorts_passthrough"] = True
         self.addon.responseheaders(flow)
         self.addon.response(flow)
         payload = json.loads(flow.response.get_text())
@@ -296,7 +296,7 @@ class ProxyAddonTests(unittest.TestCase):
 
 class YouTubeStrictFilterTests(unittest.TestCase):
     def setUp(self):
-        self.addon = module.BFSBAdblockAddon()
+        self.addon = module.QuillonAdblockAddon()
 
     @staticmethod
     def _reel(title):
@@ -310,13 +310,13 @@ class YouTubeStrictFilterTests(unittest.TestCase):
     def test_search_query_with_blocked_term_is_blocked(self):
         flow = FakeHTTPFlow("https://www.youtube.com/results?search_query=hot+porn+video")
         self.addon.request(flow)
-        self.assertTrue(flow.metadata.get("bfsb_fake"))
+        self.assertTrue(flow.metadata.get("quillon_fake"))
         self.assertEqual(flow.response.status_code, 200)
 
     def test_clean_search_query_is_not_blocked(self):
         flow = FakeHTTPFlow("https://www.youtube.com/results?search_query=python+tutorial")
         self.addon.request(flow)
-        self.assertFalse(flow.metadata.get("bfsb_fake"))
+        self.assertFalse(flow.metadata.get("quillon_fake"))
 
     def test_json_search_body_with_blocked_term_is_blocked(self):
         body = json.dumps({"query": "onlyfans leak"}).encode("utf-8")
@@ -326,7 +326,7 @@ class YouTubeStrictFilterTests(unittest.TestCase):
             content=body,
         )
         self.addon.request(flow)
-        self.assertTrue(flow.metadata.get("bfsb_fake"))
+        self.assertTrue(flow.metadata.get("quillon_fake"))
 
     def test_json_search_body_is_unstreamed_so_it_can_be_read(self):
         for url in (
@@ -398,7 +398,7 @@ class YouTubeStrictFilterTests(unittest.TestCase):
 
             search = FakeHTTPFlow("https://www.youtube.com/results?search_query=porn")
             self.addon.request(search)
-            self.assertTrue(search.metadata.get("bfsb_fake"))
+            self.assertTrue(search.metadata.get("quillon_fake"))
 
     def test_ads_are_kept_when_adblock_is_disabled(self):
         import tempfile
@@ -425,8 +425,8 @@ class YouTubeStrictFilterTests(unittest.TestCase):
     def test_filter_can_be_disabled_by_env(self):
         import os
 
-        previous = os.environ.get("BFSB_YOUTUBE_STRICT_FILTER")
-        os.environ["BFSB_YOUTUBE_STRICT_FILTER"] = "0"
+        previous = os.environ.get("QUILLON_YOUTUBE_STRICT_FILTER")
+        os.environ["QUILLON_YOUTUBE_STRICT_FILTER"] = "0"
         try:
             payload = json.dumps({"items": [self._reel("sexy bikini girl")]}).encode("utf-8")
             flow = FakeHTTPFlow(
@@ -439,12 +439,12 @@ class YouTubeStrictFilterTests(unittest.TestCase):
 
             search = FakeHTTPFlow("https://www.youtube.com/results?search_query=porn")
             self.addon.request(search)
-            self.assertFalse(search.metadata.get("bfsb_fake"))
+            self.assertFalse(search.metadata.get("quillon_fake"))
         finally:
             if previous is None:
-                os.environ.pop("BFSB_YOUTUBE_STRICT_FILTER", None)
+                os.environ.pop("QUILLON_YOUTUBE_STRICT_FILTER", None)
             else:
-                os.environ["BFSB_YOUTUBE_STRICT_FILTER"] = previous
+                os.environ["QUILLON_YOUTUBE_STRICT_FILTER"] = previous
 
 
 if __name__ == "__main__":

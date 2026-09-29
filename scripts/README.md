@@ -1,6 +1,6 @@
-# BFSB headless test harness
+# Quillon headless test harness
 
-Drive the BFSB Qt browser under Xvfb, click/hover/eval/inspect via CDP, capture
+Drive the Quillon Qt browser under Xvfb, click/hover/eval/inspect via CDP, capture
 screenshots + console errors. No Playwright required.
 
 ## Quick start
@@ -10,9 +10,9 @@ screenshots + console errors. No Playwright required.
 ```
 
 This will:
-1. Kill any old BFSB / Xvfb process on our display port.
+1. Kill any old Quillon / Xvfb process on our display port.
 2. Start Xvfb on `:99` (1400x900x24).
-3. Launch BFSB via `launch.sh` under `DISPLAY=:99`.
+3. Launch Quillon via `launch.sh` under `DISPLAY=:99`.
 4. Wait until CDP (`localhost:9222`) and the local search server
    (`localhost:8889`) are both up.
 5. Run `scripts/run-checks.py`.
@@ -31,7 +31,7 @@ The tab bar is visible (rendered by Qt) but is **not** part of the
 Chromium DOM — that's why the embedded webview tests don't see
 `#newTabBtn`. CDP queries against the DOM only ever see HTML content.
 
-## Available CDP commands (`scripts/bfsb_cdp.py`)
+## Available CDP commands (`scripts/quillon_cdp.py`)
 
 - `await cdp.eval(js_expr)` — synchronous JS eval, returns the value
 - `await cdp.query_box(selector)` — returns `(x, y, w, h)` or `None`
@@ -53,7 +53,7 @@ Open `scripts/run-checks.py`, append to `CHECKS`:
 CHECKS.append({
     "name": "side panel opens on Ctrl+B",
     "action": lambda c: c.keypress("ctrl+b"),
-    "assert": lambda c: c.eval("document.querySelector('.bfsb-side-panel.visible') !== null") or False,
+    "assert": lambda c: c.eval("document.querySelector('.quillon-side-panel.visible') !== null") or False,
 })
 ```
 
@@ -62,11 +62,11 @@ instance. The `assert` step returns truthy for pass.
 
 ## Troubleshooting
 
-- BFSB hangs on launch — see `/tmp/bfsb-headless.log` and `/tmp/xvfb.log`.
+- Quillon hangs on launch — see `/tmp/quillon-headless.log` and `/tmp/xvfb.log`.
 - CDP never comes up — `launch.sh` might be flagging the port. Try
   `lsof -i :9222`.
 - ydotool enters wrong coordinates — check the Xvfb geometry (we use
-  1400x900). If BFSB resizes, update `headless-test.sh` to match.
+  1400x900). If Quillon resizes, update `headless-test.sh` to match.
 - The check runner can't see `#newTabBtn` — that's correct, it's Qt chrome.
   Use a coordinate-based `ydotool_click(...)` for native-only assertions.
 
@@ -74,7 +74,7 @@ instance. The `assert` step returns truthy for pass.
 
 | File | Role |
 |------|------|
-| `headless-test.sh` | Entrypoint (Xvfb, BFSB lifecycle, teardown) |
-| `bfsb_cdp.py`       | Async CDP client (no Playwright dep) |
+| `headless-test.sh` | Entrypoint (Xvfb, Quillon lifecycle, teardown) |
+| `quillon_cdp.py`       | Async CDP client (no Playwright dep) |
 | `run-checks.py`     | Declarative check definitions |
 | `screenshots/`      | PNGs written during runs |

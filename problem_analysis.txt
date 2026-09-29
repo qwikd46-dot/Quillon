@@ -7,12 +7,12 @@ The adblock functionality exists but isn't properly intercepting ad requests.
 
 ### KEY FINDINGS:
 
-1. **RequestInterceptor Logic** - In `/home/binwalk/Downloads/bfsb/bfsb/core/webengine.py`:
+1. **RequestInterceptor Logic** - In `/home/binwalk/Downloads/bfsb/quillon/core/webengine.py`:
    - Lines 222-238 implement hardcoded blocking
    - `HARD_BLOCK_SUBSTRINGS` contains ad patterns
    - Should block requests BEFORE engine check
 
-2. **Blocklist Engine** - In `/home/binwalk/Downloads/bfsb/bfsb/core/blocker.py`:
+2. **Blocklist Engine** - In `/home/binwalk/Downloads/bfsb/quillon/core/blocker.py`:
    - Engine initialised with EasyList, EasyPrivacy
    - Has _BUILTIN_FALLBACK_RULES for ad networks
    
@@ -102,7 +102,7 @@ Update the HARD_BLOCK_SUBSTRINGS in webengine.py to match ALL ad domains from _B
 
 ## IMMEDIATE FIX NEEDED:
 
-Edit `/home/binwalk/Downloads/bfsb/bfsb/core/webengine.py` and update the HARD_BLOCK_SUBSTRINGS to include:
+Edit `/home/binwalk/Downloads/bfsb/quillon/core/webengine.py` and update the HARD_BLOCK_SUBSTRINGS to include:
 - All domains from _BUILTIN_FALLBACK_RULES
 - Additional ad patterns
 - More comprehensive ad blocking

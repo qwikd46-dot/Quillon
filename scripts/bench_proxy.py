@@ -13,7 +13,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 
 class Handler(BaseHTTPRequestHandler):
-    payload = b"BFSB proxy benchmark payload\n" * 64
+    payload = b"Quillon proxy benchmark payload\n" * 64
 
     def do_GET(self):
         self.send_response(200)
@@ -74,8 +74,8 @@ def main():
         print(json.dumps(result, indent=2))
         return 0
 
-    with tempfile.TemporaryDirectory(prefix="bfsb-bench-") as directory:
-        addon = Path(__file__).parents[1] / "bfsb" / "core" / "proxy_addon.py"
+    with tempfile.TemporaryDirectory(prefix="quillon-bench-") as directory:
+        addon = Path(__file__).parents[1] / "quillon" / "core" / "proxy_addon.py"
         command = [
             mitmdump,
             "--listen-host", args.host,

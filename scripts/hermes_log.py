@@ -1,10 +1,10 @@
-"""Color-coded logger for the BFSB test harness.
+"""Color-coded logger for the Quillon test harness.
 
 Four levels:
 - ``PASS`` (green ✓) — a check passed
 - ``FAIL`` (red ✗)   — a check failed; a follow-up block of context is
   printed (what was tried, what was expected, last screenshot path)
-- ``INFO`` (cyan)    — operational info ("BFSB ready in 4.2s")
+- ``INFO`` (cyan)    — operational info ("Quillon ready in 4.2s")
 - ``WARN`` (yellow)  — something is odd but not fatal
 
 Each call writes ONE line to stderr (live, for humans) AND one line to

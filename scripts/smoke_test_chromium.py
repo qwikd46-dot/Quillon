@@ -33,7 +33,7 @@ def main() -> int:
         print(version.stderr.strip() or "version check failed")
         return 1
     print(f"version={version.stdout.strip()}")
-    profile = Path(tempfile.mkdtemp(prefix="bfsb-chromium-smoke-"))
+    profile = Path(tempfile.mkdtemp(prefix="quillon-chromium-smoke-"))
     profile.chmod(0o700)
     try:
         command = [

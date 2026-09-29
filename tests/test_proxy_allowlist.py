@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 
 
-path = Path(__file__).parents[1] / "bfsb" / "core" / "proxy_bootstrap.py"
-spec = importlib.util.spec_from_file_location("bfsb_proxy_bootstrap_test", path)
+path = Path(__file__).parents[1] / "quillon" / "core" / "proxy_bootstrap.py"
+spec = importlib.util.spec_from_file_location("quillon_proxy_bootstrap_test", path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
@@ -28,13 +28,13 @@ class AllowlistTests(unittest.TestCase):
             self.assertNotRegex(host, pattern)
 
     def test_process_detection_handles_nul_delimited_argv(self):
-        raw = "mitmdump\0--listen-port\08228\0-s\0/proj/bfsb/core/proxy_addon.py\0"
-        self.assertTrue(module._is_bfsb_mitmprocess(raw, 8228))
-        self.assertFalse(module._is_bfsb_mitmprocess("mitmdump\0--listen-port\09080\0-s\0/proj/bfsb/core/proxy_addon.py\0", 8228))
+        raw = "mitmdump\0--listen-port\08228\0-s\0/proj/quillon/core/proxy_addon.py\0"
+        self.assertTrue(module._is_quillon_mitmprocess(raw, 8228))
+        self.assertFalse(module._is_quillon_mitmprocess("mitmdump\0--listen-port\09080\0-s\0/proj/quillon/core/proxy_addon.py\0", 8228))
 
     def test_occupied_unrecognized_proxy_fails_closed(self):
         # This reached the real _cleanup_recorded_proxy(), which reads the
-        # shared ~/.bfsb/proxy.pid. Running the suite with BFSB open would
+        # shared ~/.quillon/proxy.pid. Running the suite with Quillon open would
         # SIGTERM the live proxy and give the user ERR_PROXY_CONNECTION_
         # FAILED. Redirect the pid file AND neutralise the kill.
         import tempfile

@@ -37,7 +37,7 @@ def _discover() -> list[pathlib.Path]:
 
 
 def _load(path: pathlib.Path) -> unittest.TestSuite:
-    name = f"bfsb_suite_{path.stem}"
+    name = f"quillon_suite_{path.stem}"
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")

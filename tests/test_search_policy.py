@@ -7,8 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 spec = importlib.util.spec_from_file_location(
-    "bfsb_search_policy_test",
-    ROOT / "bfsb/core/search/policy.py",
+    "quillon_search_policy_test",
+    ROOT / "quillon/core/search/policy.py",
 )
 policy = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = policy
@@ -82,7 +82,7 @@ class SearchPolicyTests(unittest.TestCase):
 
 class AddressBarContractTests(unittest.TestCase):
     def test_typed_domain_navigates_over_https(self):
-        template = (ROOT / "bfsb/templates/bfsb_combined.html").read_text(encoding="utf-8")
+        template = (ROOT / "quillon/templates/quillon_combined.html").read_text(encoding="utf-8")
         self.assertIn("function directUrlForAddress", template)
         self.assertIn("return 'https://' + val;", template)
         self.assertIn("const direct = directUrlForAddress(val);", template)

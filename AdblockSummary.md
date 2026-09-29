@@ -30,7 +30,7 @@ cd /home/binwalk/Downloads/bfsb
 python3 -c "
 import sys
 sys.path.insert(0, '.')
-from bfsb.core import URLBlocker
+from quillon.core import URLBlocker
 
 blocker = URLBlocker()
 print('Adblock working:', all(blocker.is_blocked(url) for url in [

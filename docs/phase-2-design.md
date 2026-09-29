@@ -38,10 +38,10 @@ per query to an in-memory channel; the page subscribes with SSE:
   animation removed/replaced by the pulsing class.
 
 ## Files touched
-- `bfsb/core/server.py` (SSE route, progress channel, `format=json` search route — shared with Phase 1)
-- `bfsb/core/search/aggregator.py` (progress callback param)
-- `bfsb/templates/bfsb_combined.html` (EventSource client, bar states, SPA search render)
-- `bfsb/ui/browser_chrome.py` + `bfsb/ui/main_window.py` (native bar → loadProgress-driven)
+- `quillon/core/server.py` (SSE route, progress channel, `format=json` search route — shared with Phase 1)
+- `quillon/core/search/aggregator.py` (progress callback param)
+- `quillon/templates/quillon_combined.html` (EventSource client, bar states, SPA search render)
+- `quillon/ui/browser_chrome.py` + `quillon/ui/main_window.py` (native bar → loadProgress-driven)
 
 ## Risks
 - SSE through the filtering proxy: the stream is localhost (browser → 127.0.0.1:8889

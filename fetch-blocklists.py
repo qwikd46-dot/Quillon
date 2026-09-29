@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fetch and update blocklists for BFSB."""
+"""Fetch and update blocklists for Quillon."""
 import requests
 from pathlib import Path
 from datetime import datetime
 
-BLOCKLIST_DIR = Path.home() / ".bfsb" / "blocklists"
+BLOCKLIST_DIR = Path.home() / ".quillon" / "blocklists"
 
 def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")

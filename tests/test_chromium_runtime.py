@@ -20,8 +20,8 @@ def load_module(name, relative_path):
     return module
 
 
-runtime = load_module("bfsb_chromium_runtime_test", "bfsb/core/chromium_runtime.py")
-packager = load_module("bfsb_chromium_packager_test", "scripts/package_chromium_build.py")
+runtime = load_module("quillon_chromium_runtime_test", "quillon/core/chromium_runtime.py")
+packager = load_module("quillon_chromium_packager_test", "scripts/package_chromium_build.py")
 
 
 class ChromiumRuntimeTests(unittest.TestCase):
@@ -44,7 +44,7 @@ class ChromiumRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             profile = Path(directory) / "profile"
             spec = runtime.ChromiumLaunchSpec(
-                binary=Path("/opt/bfsb/chrome"),
+                binary=Path("/opt/quillon/chrome"),
                 profile_dir=profile,
                 initial_url="https://www.youtube.com/",
                 policy=runtime.policy_for_mode("standard"),
@@ -53,7 +53,7 @@ class ChromiumRuntimeTests(unittest.TestCase):
                 extra_args=("--start-maximized",),
             )
             command = spec.command()
-            self.assertEqual(command[0], "/opt/bfsb/chrome")
+            self.assertEqual(command[0], "/opt/quillon/chrome")
             self.assertIn(f"--user-data-dir={profile}", command)
             self.assertIn("--proxy-server=http://127.0.0.1:8228", command)
             self.assertIn("--ignore-certificate-errors-spki-list=abc123", command)
@@ -64,7 +64,7 @@ class ChromiumRuntimeTests(unittest.TestCase):
     def test_command_rejects_unsupported_url(self):
         with tempfile.TemporaryDirectory() as directory:
             spec = runtime.ChromiumLaunchSpec(
-                binary=Path("/opt/bfsb/chrome"),
+                binary=Path("/opt/quillon/chrome"),
                 profile_dir=Path(directory) / "profile",
                 initial_url="file:///etc/passwd",
             )
@@ -87,7 +87,7 @@ class ChromiumPackagerTests(unittest.TestCase):
             (build / "chrome").write_text("binary", encoding="ascii")
             (build / "resources.pak").write_bytes(b"pak")
             (build / "obj").mkdir()
-            output = Path(directory) / "dist" / "bfsb.tar.gz"
+            output = Path(directory) / "dist" / "quillon.tar.gz"
             artifact, checksum = packager.package(build, output)
             self.assertTrue(artifact.is_file())
             self.assertTrue(checksum.is_file())

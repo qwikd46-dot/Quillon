@@ -12,13 +12,13 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES_DIR = REPO_ROOT / "bfsb" / "templates"
-TEMPLATE_PATH = TEMPLATES_DIR / "bfsb_combined.html"
-SERVER_PATH = REPO_ROOT / "bfsb" / "core" / "server.py"
+TEMPLATES_DIR = REPO_ROOT / "quillon" / "templates"
+TEMPLATE_PATH = TEMPLATES_DIR / "quillon_combined.html"
+SERVER_PATH = REPO_ROOT / "quillon" / "core" / "server.py"
 
 try:
     from aiohttp import ClientSession
-    from bfsb.core.server import BFSHBServer
+    from quillon.core.server import BFSHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
     BFSHBServer = None

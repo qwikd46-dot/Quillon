@@ -4,7 +4,7 @@ Status: **implemented 2026-09-24; final live proxy/YouTube verification pending*
 The host allowlist is narrowed to `youtube.com`, `www.youtube.com`, and
 `*.googlevideo.com`; the generated list still requires final user review.
 Direct YouTube navigation is the default so the reviewed proxy scope remains
-effective; set `BFSB_USE_PRIVACY_FRONTENDS=1` to opt into the legacy
+effective; set `QUILLON_USE_PRIVACY_FRONTENDS=1` to opt into the legacy
 Invidious/Piped redirect, which is outside this TLS scope.
 
 ## 5.0 TLS interception scope
@@ -70,9 +70,9 @@ Playback requests without an ad discriminator are never matched.
   (first-byte latency + memory flat). Results into PERF_NOTES.md.
 
 ## Files touched
-- `bfsb/core/proxy_addon.py` (fake-response map, streaming rule, redacted rule metadata)
-- `bfsb/core/proxy_bootstrap.py` (generated `--allow-hosts` list)
-- `bfsb/core/webengine.py` (allow reviewed proxy-owned ad requests to reach the proxy)
+- `quillon/core/proxy_addon.py` (fake-response map, streaming rule, redacted rule metadata)
+- `quillon/core/proxy_bootstrap.py` (generated `--allow-hosts` list)
+- `quillon/core/webengine.py` (allow reviewed proxy-owned ad requests to reach the proxy)
 - `tests/test_proxy_addon.py`, `tests/test_proxy_allowlist.py`, `scripts/bench_proxy.py`
 
 ## Risks

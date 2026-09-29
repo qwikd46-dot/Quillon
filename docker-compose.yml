@@ -1,22 +1,22 @@
 services:
   # ---------------------------------------------------------------------
-  # BFSB itself: the Qt/WebEngine UI, the mitmdump ad-block proxy, the
+  # Quillon itself: the Qt/WebEngine UI, the mitmdump ad-block proxy, the
   # Node Ghostery engine and SearXNG, all in one container, supervised by
-  # a single PID 1 process (bfsb_supervisor.py).
+  # a single PID 1 process (quillon_supervisor.py).
   #
-  #   podman compose up -d bfsb
-  #   podman compose logs -f bfsb
+  #   podman compose up -d quillon
+  #   podman compose logs -f quillon
   #   podman compose down
   #
   # Ports are published to loopback only. Nothing here should be reachable
   # from the network.
   # ---------------------------------------------------------------------
-  bfsb:
+  quillon:
     build:
       context: .
       dockerfile: Dockerfile
-    image: bfsb:latest
-    container_name: bfsb
+    image: quillon:latest
+    container_name: quillon
     restart: unless-stopped
     # Chromium's sandbox cannot initialise without user namespaces, and
     # the GUI already runs with --no-sandbox on the host launcher.
@@ -25,10 +25,10 @@ services:
     cap_drop:
       - ALL
     ports:
-      # Only usable with BFSB_EXPOSE=1. The app binds 127.0.0.1 inside
+      # Only usable with QUILLON_EXPOSE=1. The app binds 127.0.0.1 inside
       # the container's own network namespace, so a published port cannot
       # reach it directly; the supervisor starts a socat forwarder for
-      # each of these when BFSB_EXPOSE=1, and the container is entirely
+      # each of these when QUILLON_EXPOSE=1, and the container is entirely
       # self-contained when it is 0.
       - "127.0.0.1:8889:8889"   # UI server
       - "127.0.0.1:8228:8228"   # ad-block proxy
@@ -37,16 +37,16 @@ services:
       # host, good for servers and CI).
       # 0 = draw on the host's X display; requires the socket mount below
       # and xhost +si:localuser:$(id -un) on the host first.
-      BFSB_HEADLESS: "${BFSB_HEADLESS:-1}"
+      QUILLON_HEADLESS: "${QUILLON_HEADLESS:-1}"
       DISPLAY: "${DISPLAY:-:99}"
-      BFSB_SEARXNG_URL: "http://127.0.0.1:8888"
+      QUILLON_SEARXNG_URL: "http://127.0.0.1:8888"
       # 1 = forward 8889/8228 to the host so the published ports work.
-      BFSB_EXPOSE: "${BFSB_EXPOSE:-0}"
+      QUILLON_EXPOSE: "${QUILLON_EXPOSE:-0}"
     volumes:
       # The vault writes its key file under $HOME, and the whole profile
       # lives there. Losing this volume loses saved passwords and the
       # Chromium profile, so it is a real named volume, not a tmpfs.
-      - bfsb-data:/home/binwalk/.bfsb
+      - quillon-data:/home/binwalk/.quillon
       # Uncomment to show the window on the host display instead of Xvfb.
       # - /tmp/.X11-unix:/tmp/.X11-unix:rw
     # Chromium wants more than Docker's default 64 MB of /dev/shm; the
@@ -67,13 +67,13 @@ services:
   # ---------------------------------------------------------------------
   piped:
     image: ghcr.io/team-piped/piped:latest
-    container_name: bfsb-piped
+    container_name: quillon-piped
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"  # Only bind to localhost
     environment:
       # Disable public API - we only use it internally
-      - INSTANCE_NAME=BFSB Local
+      - INSTANCE_NAME=Quillon Local
       - DEFAULT_INSTANCE=http://localhost:8080
       - TRUSTED_PROXIES=127.0.0.1
       # No external database needed - uses SQLite by default
@@ -94,5 +94,5 @@ services:
       start_period: 10s
 
 volumes:
-  bfsb-data:
+  quillon-data:
   piped-data:

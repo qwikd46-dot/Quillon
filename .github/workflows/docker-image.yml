@@ -1,7 +1,7 @@
 name: build and publish the image
 
 # Publishing on every push is the point: it is what makes
-#   podman pull ghcr.io/qwikd46-dot/bfsb
+#   podman pull ghcr.io/qwikd46-dot/quillon
 # give a clone a fully-built image with every package already installed,
 # instead of a 2 GB build.
 #

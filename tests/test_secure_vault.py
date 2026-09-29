@@ -17,8 +17,8 @@ except ImportError:
 
 
 def load_secure_vault():
-    name = "bfsb_secure_vault_test"
-    path = ROOT / "bfsb/core/secure_vault.py"
+    name = "quillon_secure_vault_test"
+    path = ROOT / "quillon/core/secure_vault.py"
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -55,8 +55,8 @@ class SecureVaultTests(unittest.TestCase):
             def set_password(self, service, account, value):
                 raise RuntimeError("unavailable")
 
-        previous = os.environ.get("BFSB_VAULT_ALLOW_FILE_KEY")
-        os.environ["BFSB_VAULT_ALLOW_FILE_KEY"] = "1"
+        previous = os.environ.get("QUILLON_VAULT_ALLOW_FILE_KEY")
+        os.environ["QUILLON_VAULT_ALLOW_FILE_KEY"] = "1"
         try:
             provider = self.vault.VaultKeyProvider(
                 self.root / "fallback.key", keyring_module=UnavailableKeyring()
@@ -64,9 +64,9 @@ class SecureVaultTests(unittest.TestCase):
             provider.get_root_key()
         finally:
             if previous is None:
-                os.environ.pop("BFSB_VAULT_ALLOW_FILE_KEY", None)
+                os.environ.pop("QUILLON_VAULT_ALLOW_FILE_KEY", None)
             else:
-                os.environ["BFSB_VAULT_ALLOW_FILE_KEY"] = previous
+                os.environ["QUILLON_VAULT_ALLOW_FILE_KEY"] = previous
         self.assertEqual(stat.S_IMODE((self.root / "fallback.key").stat().st_mode), 0o600)
 
     def test_records_are_encrypted_and_authenticated(self):
@@ -118,7 +118,7 @@ class SecureVaultTests(unittest.TestCase):
     def test_missing_keyring_falls_back_to_a_file_key_without_any_env_var(self):
         """A first run with no Secret Service must still persist.
 
-        This used to fail closed behind BFSB_VAULT_ALLOW_FILE_KEY, which
+        This used to fail closed behind QUILLON_VAULT_ALLOW_FILE_KEY, which
         no launcher set, so a browser on such a machine silently never
         saved a password.
         """
@@ -129,7 +129,7 @@ class SecureVaultTests(unittest.TestCase):
             def set_password(self, service, account, value):
                 raise RuntimeError("unavailable")
 
-        previous = os.environ.pop("BFSB_VAULT_ALLOW_FILE_KEY", None)
+        previous = os.environ.pop("QUILLON_VAULT_ALLOW_FILE_KEY", None)
         try:
             provider = self.vault.VaultKeyProvider(
                 self.root / "auto.key", keyring_module=UnavailableKeyring()
@@ -137,7 +137,7 @@ class SecureVaultTests(unittest.TestCase):
             key = provider.get_root_key()
         finally:
             if previous is not None:
-                os.environ["BFSB_VAULT_ALLOW_FILE_KEY"] = previous
+                os.environ["QUILLON_VAULT_ALLOW_FILE_KEY"] = previous
         self.assertEqual(len(key), self.vault.KEY_SIZE)
         self.assertTrue((self.root / "auto.key").exists())
         self.assertEqual(stat.S_IMODE((self.root / "auto.key").stat().st_mode), 0o600)
@@ -294,7 +294,7 @@ class SecureVaultTests(unittest.TestCase):
     def test_failed_key_cleanup_keeps_reporting_degraded(self):
         """If the key file cannot be removed after promotion, the store
         must not claim the key lives only in the OS keyring."""
-        import bfsb.core.secure_vault as module
+        import quillon.core.secure_vault as module
 
         class WorkingKeyring:
             def __init__(self):
@@ -479,7 +479,7 @@ class ScopedKeyringAccountTests(unittest.TestCase):
         store = self._store_with(key)
         store.put("origin\0user", b"legacy-secret")
 
-        keyring = FakeKeyring({("bfsb", "vault-root-v2"): key.hex()})
+        keyring = FakeKeyring({("quillon", "vault-root-v2"): key.hex()})
         provider = self.vault.VaultKeyProvider(
             self.root / "absent.key", keyring_module=keyring
         )
@@ -488,9 +488,9 @@ class ScopedKeyringAccountTests(unittest.TestCase):
 
         # And it is moved onto the scoped account, with the old entry gone.
         self.assertEqual(
-            keyring.values[("bfsb", self.vault.KEYRING_ACCOUNT)], key.hex()
+            keyring.values[("quillon", self.vault.KEYRING_ACCOUNT)], key.hex()
         )
-        self.assertNotIn(("bfsb", "vault-root-v2"), keyring.values)
+        self.assertNotIn(("quillon", "vault-root-v2"), keyring.values)
 
     def test_promotion_never_happens_without_a_verified_write(self):
         """If the scoped write cannot be verified, the legacy entry stays.
@@ -505,30 +505,30 @@ class ScopedKeyringAccountTests(unittest.TestCase):
                 # Pretend the write landed; the read-back check catches it.
                 self.values[(service, account)] = "not-the-key"
 
-        keyring = FailsToStore({("bfsb", "vault-root-v2"): key.hex()})
+        keyring = FailsToStore({("quillon", "vault-root-v2"): key.hex()})
         provider = self.vault.VaultKeyProvider(
             self.root / "absent.key", keyring_module=keyring
         )
         self.assertEqual(provider.get_root_key(), key)
         # The legacy entry is the only good copy left, so it must survive.
-        self.assertEqual(keyring.values[("bfsb", "vault-root-v2")], key.hex())
+        self.assertEqual(keyring.values[("quillon", "vault-root-v2")], key.hex())
         # And the bad scoped write was rejected rather than trusted.
         self.assertNotEqual(
-            keyring.values.get(("bfsb", self.vault.KEYRING_ACCOUNT)), key.hex()
+            keyring.values.get(("quillon", self.vault.KEYRING_ACCOUNT)), key.hex()
         )
 
     def test_the_scoped_account_wins_when_both_exist(self):
         scoped, legacy = b"s" * self.vault.KEY_SIZE, b"l" * self.vault.KEY_SIZE
         keyring = FakeKeyring({
-            ("bfsb", self.vault.KEYRING_ACCOUNT): scoped.hex(),
-            ("bfsb", "vault-root-v2"): legacy.hex(),
+            ("quillon", self.vault.KEYRING_ACCOUNT): scoped.hex(),
+            ("quillon", "vault-root-v2"): legacy.hex(),
         })
         provider = self.vault.VaultKeyProvider(
             self.root / "absent.key", keyring_module=keyring
         )
         self.assertEqual(provider.get_root_key(), scoped)
         # The stale global entry is left alone, not deleted.
-        self.assertIn(("bfsb", "vault-root-v2"), keyring.values)
+        self.assertIn(("quillon", "vault-root-v2"), keyring.values)
 
     def test_two_installations_never_share_a_key(self):
         """The whole point: two checkouts must not overwrite each other."""
@@ -539,17 +539,17 @@ class ScopedKeyringAccountTests(unittest.TestCase):
 
         key_a, key_b = b"1" * self.vault.KEY_SIZE, b"2" * self.vault.KEY_SIZE
         keyring = FakeKeyring({
-            ("bfsb", account_a): key_a.hex(),
-            ("bfsb", account_b): key_b.hex(),
+            ("quillon", account_a): key_a.hex(),
+            ("quillon", account_b): key_b.hex(),
         })
 
         # A single global account would hold one of these and lose the
         # other. Scoped accounts keep both keys independently readable.
         self.assertEqual(
-            bytes.fromhex(keyring.get_password("bfsb", account_a)), key_a
+            bytes.fromhex(keyring.get_password("quillon", account_a)), key_a
         )
         self.assertEqual(
-            bytes.fromhex(keyring.get_password("bfsb", account_b)), key_b
+            bytes.fromhex(keyring.get_password("quillon", account_b)), key_b
         )
         self.assertEqual(len(keyring.values), 2)
 
@@ -574,7 +574,7 @@ class ScopedKeyringAccountTests(unittest.TestCase):
                     raise RuntimeError("keyring is locked")
                 return self.values.get((service, account))
 
-        keyring = ScopedFails({("bfsb", "vault-root-v2"): key.hex()})
+        keyring = ScopedFails({("quillon", "vault-root-v2"): key.hex()})
         keyring.scoped_account = self.vault.KEYRING_ACCOUNT
         provider = self.vault.VaultKeyProvider(
             self.root / "absent.key", keyring_module=keyring

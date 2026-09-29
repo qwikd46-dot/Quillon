@@ -1,0 +1,243 @@
+"""Quillon custom web crawler.
+
+Fetches pages with politeness, extracts clean text + same-domain links,
+saves JSON metadata + raw HTML to data/crawled/.
+
+Storage layout:
+    data/crawled/<doc_id>.json   - URL, fetched_at, status, title, text, out_links
+    data/crawled/<doc_id>.html   - raw HTML bytes
+
+Where doc_id = sha256(url)[:16] for deterministic, collision-free filenames.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urljoin, urlparse
+
+import httpx
+from lxml import html as lxml_html
+
+from quillon.core.config import SECURITY_CONFIG
+
+
+# HTML noise — removed before text extraction
+_NOISE_TAGS = ("script", "style", "noscript", "nav", "footer", "header", "aside", "form")
+
+# Filter that EXCLUDES invalid href targets.
+# Matches: pure anchors (#foo), javascript:, mailto:, tel: — but KEEPS
+# relative paths (/wiki/X) and absolute URLs (https://...) which may be same-domain.
+_LINK_ATTR_RE = re.compile(r"^(#|javascript:|mailto:|tel:|data:|about:)", re.IGNORECASE)
+
+# Wikipedia article URLs are /wiki/Title (no ?action=, no /w/index.php, etc).
+# Skip Special:, Talk:, File:, etc — those are meta pages.
+_WIKI_PATH_RE = re.compile(r"^/wiki/([^:#]+)$", re.IGNORECASE)
+_WIKI_BAD_PREFIX_RE = re.compile(r"^/wiki/(Special|Talk|File|Help|Category|Template|User|Portal|Module|MediaWiki):", re.IGNORECASE)
+_WIKI_BAD_QUERY_RE = re.compile(r"[?&]action=(edit|history|delete|protect|info|raw|markpatrolled|rollback|unwatch|watch|view)$", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class CrawlResult:
+    """One crawled page."""
+    url: str
+    fetched_at: str  # ISO-8601 UTC
+    status_code: int
+    content_type: str
+    title: str
+    text: str
+    out_links: tuple[str, ...] = field(default_factory=tuple)
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "url": self.url,
+            "fetched_at": self.fetched_at,
+            "status_code": self.status_code,
+            "content_type": self.content_type,
+            "title": self.title,
+            "text": self.text,
+            "out_links": list(self.out_links),
+            "error": self.error,
+        }
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status_code < 300 and not self.error
+
+
+class Crawler:
+    """Polite async crawler. One instance = one job."""
+
+    def __init__(
+        self,
+        data_dir: Path = Path("/home/zon/quillon/data/crawled"),
+        user_agent: str = SECURITY_CONFIG.USER_AGENT,
+        timeout: float = 10.0,
+        max_concurrent: int = 2,
+        delay_seconds: float = 1.0,
+    ):
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.user_agent = user_agent
+        self.timeout = timeout
+        self.max_concurrent = max_concurrent
+        self.delay_seconds = delay_seconds
+        self._sem = asyncio.Semaphore(max_concurrent)
+        self._last_fetch_per_domain: dict[str, float] = {}
+
+    @staticmethod
+    def doc_id(url: str) -> str:
+        """Deterministic short hash of URL for filename."""
+        return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+
+    def save(self, result: CrawlResult) -> tuple[Path, Optional[Path]]:
+        """Save a CrawlResult to disk. Returns (json_path, html_path or None).
+
+        json_path always written. html_path only if html bytes available
+        (we don't keep raw html in the in-memory struct to keep it lean —
+        we keep the extracted text. Caller can decide to re-fetch raw bytes
+        later if needed; for v1 we only persist the parsed output).
+        """
+        fname = f"{self.doc_id(result.url)}.json"
+        path = self.data_dir / fname
+        path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        return (path, None)
+
+    async def _respect_politeness(self, url: str) -> None:
+        domain = urlparse(url).netloc.lower()
+        last = self._last_fetch_per_domain.get(domain, 0.0)
+        now = asyncio.get_event_loop().time()
+        wait = self.delay_seconds - (now - last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._last_fetch_per_domain[domain] = now
+
+    async def fetch(self, url: str) -> CrawlResult:
+        """Fetch a single URL. Politeness is per-domain."""
+        async with self._sem:
+            await self._respect_politeness(url)
+            now = datetime.now(timezone.utc).isoformat()
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self.timeout,
+                    follow_redirects=True,
+                    headers={
+                        "User-Agent": self.user_agent,
+                        "Accept": "text/html,application/xhtml+xml",
+                    },
+                ) as client:
+                    r = await client.get(url)
+                    ct = r.headers.get("content-type", "")
+                    body = r.content
+            except httpx.TimeoutException as e:
+                return CrawlResult(
+                    url=url, fetched_at=now, status_code=0,
+                    content_type="", title="", text="",
+                    error=f"Timeout: {e}",
+                )
+            except Exception as e:
+                return CrawlResult(
+                    url=url, fetched_at=now, status_code=0,
+                    content_type="", title="", text="",
+                    error=f"{type(e).__name__}: {e}",
+                )
+
+            # Non-HTML: skip text extraction
+            if "html" not in ct.lower():
+                return CrawlResult(
+                    url=url, fetched_at=now, status_code=r.status_code,
+                    content_type=ct, title="", text="",
+                    error="non-html content-type",
+                )
+
+            try:
+                title, text, out_links = self._parse_html(body, url)
+            except Exception as e:
+                return CrawlResult(
+                    url=url, fetched_at=now, status_code=r.status_code,
+                    content_type=ct, title="", text="",
+                    error=f"parse: {type(e).__name__}: {e}",
+                )
+
+            return CrawlResult(
+                url=url,
+                fetched_at=now,
+                status_code=r.status_code,
+                content_type=ct,
+                title=title,
+                text=text,
+                out_links=out_links,
+            )
+
+    @staticmethod
+    def _parse_html(html_bytes: bytes, base_url: str) -> tuple[str, str, tuple[str, ...]]:
+        """Parse HTML bytes → (title, text, same-domain-links)."""
+        # decode for lxml
+        try:
+            doc = lxml_html.fromstring(html_bytes)
+        except Exception:
+            # try with explicit utf-8 fallback
+            text = html_bytes.decode("utf-8", errors="replace")
+            doc = lxml_html.fromstring(text)
+
+        # Title
+        title_nodes = doc.cssselect("title")
+        title = title_nodes[0].text_content().strip() if title_nodes else ""
+
+        # Strip noise tags BEFORE extracting text
+        for tag in doc.cssselect(", ".join(_NOISE_TAGS)):
+            parent = tag.getparent()
+            if parent is not None:
+                parent.remove(tag)
+
+        # Clean text — collapse whitespace
+        raw_text = doc.text_content()
+        text = re.sub(r"\s+", " ", raw_text).strip()
+
+        # Same-domain out-links only (for politeness / bounded crawl)
+        def _norm_domain(d: str) -> str:
+            return d.lower().removeprefix("www.")
+
+        base_domain_norm = _norm_domain(urlparse(base_url).netloc)
+        out_links: set[str] = set()
+        for a in doc.cssselect("a[href]"):
+            href = a.get("href", "").strip()
+            if not href or _LINK_ATTR_RE.match(href):
+                continue
+            full = urljoin(base_url, href)
+            # Drop fragments
+            full = full.split("#", 1)[0]
+            try:
+                host = urlparse(full).netloc
+            except Exception:
+                continue
+            if not host:
+                continue
+            if _norm_domain(host) == base_domain_norm:
+                if full.startswith(("http://", "https://")):
+                    # Wikipedia-specific filtering: keep only /wiki/Title article URLs.
+                    # This skips action=edit, Special:, Talk:, etc. which would otherwise
+                    # dominate the link set on Wikipedia pages.
+                    if "wikipedia.org" in host.lower():
+                        parsed_full = urlparse(full)
+                        path = parsed_full.path
+                        # Keep only clean article paths
+                        if not _WIKI_PATH_RE.match(path):
+                            continue
+                        if _WIKI_BAD_PREFIX_RE.match(path):
+                            continue
+                        if parsed_full.query and _WIKI_BAD_QUERY_RE.search(parsed_full.query):
+                            continue
+                    out_links.add(full)
+        return title, text, tuple(sorted(out_links))
+
+    async def fetch_many(self, urls: list[str]) -> list[CrawlResult]:
+        """Fetch multiple URLs concurrently (capped by max_concurrent)."""
+        return await asyncio.gather(*(self.fetch(u) for u in urls))

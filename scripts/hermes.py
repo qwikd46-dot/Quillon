@@ -1,7 +1,7 @@
-"""BFSB test harness orchestrator.
+"""Quillon test harness orchestrator.
 
-Spawns Xvfb + BFSB via ``HermesDisplay``, runs every check in
-``hermes_checks.CHECKS`` against the running BFSB, and prints a
+Spawns Xvfb + Quillon via ``HermesDisplay``, runs every check in
+``hermes_checks.CHECKS`` against the running Quillon, and prints a
 color-coded report via ``HermesLog``.
 
 Behavior:
@@ -39,7 +39,7 @@ from hermes_log import CheckResult, HermesLog
 from hermes_xvfb import HermesDisplay
 from hermes_checks import CHECKS
 
-import bfsb_cdp
+import quillon_cdp
 
 
 # ── Constants ──────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ async def run(
     report_path = SCREENSHOT_DIR / "report.log"
     log = HermesLog(report_path)
 
-    log.banner("BFSB Hermes Test Harness")
+    log.banner("Quillon Hermes Test Harness")
     log.info(f"screenshots → {SCREENSHOT_DIR}")
     log.info(f"report     → {report_path}")
 
@@ -98,11 +98,11 @@ async def run(
 
     with HermesDisplay(PROJECT_DIR, SCREENSHOT_DIR, keep=keep_display) as display:
         log.info(f"Xvfb ready on {display.display}")
-        display.start_bfsb(timeout_s=30)
-        log.info("BFSB ready (CDP up)")
+        display.start_quillon(timeout_s=30)
+        log.info("Quillon ready (CDP up)")
 
         # Connect CDP.
-        async with bfsb_cdp.CDP(port=display.cdp_port) as cdp:
+        async with quillon_cdp.CDP(port=display.cdp_port) as cdp:
             # Run each group, each check.
             for group_name, group_checks in CHECKS:
                 if not group_checks:
@@ -134,14 +134,14 @@ async def run(
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="BFSB Hermes test harness")
+    p = argparse.ArgumentParser(description="Quillon Hermes test harness")
     p.add_argument(
         "--timeout", type=float, default=DEFAULT_CHECK_TIMEOUT_S,
         help=f"per-check timeout in seconds (default: {DEFAULT_CHECK_TIMEOUT_S})",
     )
     p.add_argument(
         "--keep-display", action="store_true",
-        help="don't kill Xvfb/BFSB on exit (for debugging)",
+        help="don't kill Xvfb/Quillon on exit (for debugging)",
     )
     p.add_argument(
         "--no-color", action="store_true",

@@ -25,7 +25,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SOURCE_DIRS = ("bfsb",)
+SOURCE_DIRS = ("quillon",)
 
 try:
     from PyQt6.QtWidgets import QApplication
@@ -46,7 +46,7 @@ def _app():
     """
     global _APP
     if _APP is None:
-        _APP = QApplication.instance() or QApplication(["bfsb-test"])
+        _APP = QApplication.instance() or QApplication(["quillon-test"])
     return _APP
 
 
@@ -99,7 +99,7 @@ class ViewIsLoadingHelperTests(unittest.TestCase):
         _app()
 
     def test_helper_returns_a_real_bool_on_a_real_view(self):
-        from bfsb.ui.main_window import view_is_loading
+        from quillon.ui.main_window import view_is_loading
 
         view = QWebEngineView()
         try:
@@ -113,7 +113,7 @@ class ViewIsLoadingHelperTests(unittest.TestCase):
 
         Every bool is in that tuple, so the original form asserted nothing.
         """
-        from bfsb.ui.main_window import view_is_loading
+        from quillon.ui.main_window import view_is_loading
 
         view = QWebEngineView()
         try:
@@ -125,7 +125,7 @@ class ViewIsLoadingHelperTests(unittest.TestCase):
         """The realistic teardown failure is a deleted C++ object raising
         RuntimeError, not page() returning None. The old test covered the
         case that cannot actually happen and missed the one that can."""
-        from bfsb.ui.main_window import view_is_loading
+        from quillon.ui.main_window import view_is_loading
 
         class _DeletedCpp:
             def page(self):
@@ -134,7 +134,7 @@ class ViewIsLoadingHelperTests(unittest.TestCase):
         self.assertIs(view_is_loading(_DeletedCpp()), False)
 
     def test_helper_survives_a_view_with_no_page(self):
-        from bfsb.ui.main_window import view_is_loading
+        from quillon.ui.main_window import view_is_loading
 
         class _NoPage:
             def page(self):
@@ -171,7 +171,7 @@ class ViewLevelIsLoadingGuardTests(unittest.TestCase):
         on a legitimate second page call, so this allows more than one and
         only requires that none sit outside the helper body.
         """
-        from bfsb.ui.main_window import view_is_loading
+        from quillon.ui.main_window import view_is_loading
 
         helper_source = Path(view_is_loading.__code__.co_filename).read_text(
             encoding="utf-8", errors="replace"
@@ -202,19 +202,19 @@ class SwitchTabBehaviourTests(unittest.TestCase):
 
     def setUp(self):
         _app()
-        self._had_bfsb_test = "BFSB_TEST" in os.environ
-        self._prev_bfsb_test = os.environ.get("BFSB_TEST")
-        os.environ.setdefault("BFSB_TEST", "1")
+        self._had_quillon_test = "QUILLON_TEST" in os.environ
+        self._prev_quillon_test = os.environ.get("QUILLON_TEST")
+        os.environ.setdefault("QUILLON_TEST", "1")
 
     def tearDown(self):
-        # BFSB_TEST is what disables the CORS guard at server.py:233 and
+        # QUILLON_TEST is what disables the CORS guard at server.py:233 and
         # :235. Leaving it set for the rest of the process hands anyone who
         # writes a CORS test next a vacuous pass, so give it back exactly as
         # we found it.
-        if self._had_bfsb_test:
-            os.environ["BFSB_TEST"] = self._prev_bfsb_test
+        if self._had_quillon_test:
+            os.environ["QUILLON_TEST"] = self._prev_quillon_test
         else:
-            os.environ.pop("BFSB_TEST", None)
+            os.environ.pop("QUILLON_TEST", None)
 
     def _patch(self, module, name, value):
         original = getattr(module, name)
@@ -224,8 +224,8 @@ class SwitchTabBehaviourTests(unittest.TestCase):
     def _build_window(self):
         """Build a real window against throwaway state.
 
-        BFSBWindow constructs CookieVault and PasswordVault in __init__,
-        and those reach the real ~/.bfsb vault plus the real OS keyring.
+        QuillonWindow constructs CookieVault and PasswordVault in __init__,
+        and those reach the real ~/.quillon vault plus the real OS keyring.
         Left alone, simply running this suite migrates the user's vault
         key to a new account -- or, with no vault on disk, mints and
         stores a fresh one. A test must not edit live credentials, so
@@ -235,19 +235,19 @@ class SwitchTabBehaviourTests(unittest.TestCase):
         import dataclasses
         import tempfile
 
-        from bfsb.core import config
-        from bfsb.core import cookies as cookies_mod
-        from bfsb.core import passwords as passwords_mod
-        from bfsb.core import secure_vault
-        from bfsb.core.blocker import URLBlocker
-        from bfsb.ui.main_window import BFSBWindow
+        from quillon.core import config
+        from quillon.core import cookies as cookies_mod
+        from quillon.core import passwords as passwords_mod
+        from quillon.core import secure_vault
+        from quillon.core.blocker import URLBlocker
+        from quillon.ui.main_window import QuillonWindow
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         sandboxed = dataclasses.replace(
             config.PATHS,
-            BFSB_DIR=root,
+            QUILLON_DIR=root,
             COOKIE_DB=root / "cookies.enc",
             PASSWORD_DB=root / "passwords.enc",
             VAULT_DB=root / "vault.enc",
@@ -280,7 +280,7 @@ class SwitchTabBehaviourTests(unittest.TestCase):
         for module in (cookies_mod, passwords_mod):
             self._patch(module, "VaultKeyProvider", sandboxed_provider)
 
-        return BFSBWindow(URLBlocker())
+        return QuillonWindow(URLBlocker())
 
     def test_opening_a_tab_by_url_starts_the_progress_bar(self):
         """A clicked result link opens a tab by URL, and that is the path
@@ -319,9 +319,9 @@ class SwitchTabBehaviourTests(unittest.TestCase):
             window.deleteLater()
 
     def test_progress_starts_after_the_chrome_is_shown_for_a_bookmark_press(self):
-        """A bookmark card navigates the current view out of a BFSB page.
+        """A bookmark card navigates the current view out of a Quillon page.
 
-        The chrome is hidden on BFSB pages, so loadStarted fires while the
+        The chrome is hidden on Quillon pages, so loadStarted fires while the
         bar is still inside a hidden widget and the bar is painted where
         nobody can see it. It must be started again once the chrome is
         actually shown for a site.
@@ -333,7 +333,7 @@ class SwitchTabBehaviourTests(unittest.TestCase):
         loop = QEventLoop(); QTimer.singleShot(1500, loop.quit); loop.exec()
         self.assertFalse(
             getattr(window, "_chrome_shown_for_site", False),
-            "the chrome should be hidden while on a BFSB page",
+            "the chrome should be hidden while on a Quillon page",
         )
 
         order = []
@@ -358,8 +358,8 @@ class SwitchTabBehaviourTests(unittest.TestCase):
             "hidden, so the user saw no bar at all",
         )
 
-    def test_opening_a_bfsb_page_does_not_start_the_progress_bar(self):
-        """The bar is for real sites; BFSB pages have no native chrome."""
+    def test_opening_a_quillon_page_does_not_start_the_progress_bar(self):
+        """The bar is for real sites; Quillon pages have no native chrome."""
         from PyQt6.QtCore import QEventLoop, QTimer
 
         window = self._build_window()

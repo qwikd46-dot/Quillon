@@ -1,18 +1,18 @@
 #!/bin/bash
-# BFSB Firewall — Aggressive nftables rules
+# Quillon Firewall — Aggressive nftables rules
 # Blocks all inbound traffic except loopback
 # Allows only DNS, DHCP, and SearXNG locally
 # Rate-limits outbound connections
 
 set -e
 
-TABLE="inet bfsb_fw"
+TABLE="inet quillon_fw"
 
 # Remove old rules if exist
 sudo nft delete table $TABLE 2>/dev/null || true
 
 sudo nft -f - << 'EOF'
-table inet bfsb_fw {
+table inet quillon_fw {
     # Blocked IPs (populated dynamically)
     set blocked_ips {
         type ipv4_addr
@@ -78,6 +78,6 @@ table inet bfsb_fw {
 }
 EOF
 
-echo "[BFSB Firewall] nftables rules applied successfully"
-echo "[BFSB Firewall] Block rate: 200/s outbound, 50/s inbound"
-echo "[BFSB Firewall] All unwanted traffic is DROPPED"
+echo "[Quillon Firewall] nftables rules applied successfully"
+echo "[Quillon Firewall] Block rate: 200/s outbound, 50/s inbound"
+echo "[Quillon Firewall] All unwanted traffic is DROPPED"

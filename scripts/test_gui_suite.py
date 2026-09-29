@@ -22,8 +22,8 @@ async def main():
     # Self-contained harness: always start from a fresh browser instance.
     subprocess.run(["pkill", "-9", "-f", "[b]fsb.main"], capture_output=True)
     time.sleep(2)
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", BFSB_TEST="1", PYTHONUNBUFFERED="1")
-    subprocess.Popen(["setsid", "python3", "-m", "bfsb.main"], cwd="/home/binwalk/Downloads/bfsb",
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QUILLON_TEST="1", PYTHONUNBUFFERED="1")
+    subprocess.Popen(["setsid", "python3", "-m", "quillon.main"], cwd="/home/binwalk/Downloads/bfsb",
                      env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      stdin=subprocess.DEVNULL, start_new_session=True)
     for _ in range(120):
@@ -41,8 +41,8 @@ async def main():
     p1 = pages()[0]
     async with websockets.connect(p1["webSocketDebuggerUrl"], max_size=30*1024*1024) as ws:
         # 1. GUI alive (script not dead)
-        check("bfsbAction defined (script alive)", await eval_js(ws, "typeof bfsbAction === 'function'"))
-        check("no JS errors on payload line", await eval_js(ws, "window.__BFSB_PAGE__ && !!window.__BFSB_PAGE__.savedBookmarks !== undefined"))
+        check("quillonAction defined (script alive)", await eval_js(ws, "typeof quillonAction === 'function'"))
+        check("no JS errors on payload line", await eval_js(ws, "window.__QUILLON_PAGE__ && !!window.__QUILLON_PAGE__.savedBookmarks !== undefined"))
         # 2. new tab via GUI click
         await eval_js(ws, "document.getElementById('newTabBtn').click()")
         await asyncio.sleep(4)
@@ -65,7 +65,7 @@ async def main():
     old_targets = {p["webSocketDebuggerUrl"] for p in pgs}
     async with websockets.connect(pgs[0]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
         await eval_js(w, "window.__tabMarker='ALPHA'")
-        await eval_js(w, "fetch('bfsb://newTab').catch(()=>{})")
+        await eval_js(w, "fetch('quillon://newTab').catch(()=>{})")
         await asyncio.sleep(4)
     check("three tabs", state()["view_count"] == 3)
 
@@ -80,9 +80,9 @@ async def main():
     res_t = [p for p in pgs if "search?q=github" in p["url"]]
     if home_t and res_t:
         async with websockets.connect(res_t[0]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
-            rq = await eval_js(w, "(window.__BFSB_PAGE__||{}).query || ''")
+            rq = await eval_js(w, "(window.__QUILLON_PAGE__||{}).query || ''")
         async with websockets.connect(home_t[0]["webSocketDebuggerUrl"], max_size=30*1024*1024) as w:
-            hq = await eval_js(w, "(window.__BFSB_PAGE__||{}).query || ''")
+            hq = await eval_js(w, "(window.__QUILLON_PAGE__||{}).query || ''")
         check("tabs own their state (query isolation)", rq == "github" and hq == "")
     else:
         check("tabs own their state (query isolation)", False)

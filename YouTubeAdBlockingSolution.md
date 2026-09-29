@@ -7,7 +7,7 @@ YouTube ads are still visible because the adblock system rewrites YouTube URLs t
 
 ### 1. URL Rewriting
 ```python
-# In BFSBPage._rewrite_youtube_url():
+# In QuillonPage._rewrite_youtube_url():
 if "youtube.com/watch" in url:
     return build_url(f"/watch?v={m.group(1)}", use_invidious=True)
 ```
@@ -65,7 +65,7 @@ if "youtube.com" in current_url or "youtu.be" in current_url:
 if is_youtube_content and youtube_script:
     s = QWebEngineScript()
     s.setSourceCode(youtube_script)
-    s.setName("bfsb-youtube-adblocker-dynamic")
+    s.setName("quillon-youtube-adblocker-dynamic")
     s.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
     s.setRunsOnSubFrames(True)
     scripts.insert(s)
@@ -74,7 +74,7 @@ if is_youtube_content and youtube_script:
 
 ## Implementation
 
-The fix has been implemented in `/home/binwalk/Downloads/bfsb/bfsb/core/webengine.py`:
+The fix has been implemented in `/home/binwalk/Downloads/bfsb/quillon/core/webengine.py`:
 
 ### Changes Made:
 

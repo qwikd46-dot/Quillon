@@ -1,4 +1,4 @@
-"""BFSB is Linux-only, and should say so before anything breaks.
+"""Quillon is Linux-only, and should say so before anything breaks.
 
 The alternative is a crash somewhere inside proxy lifecycle handling, or
 worse, a live proxy that outlives the browser because nothing on that
@@ -20,12 +20,12 @@ def run_entrypoint(env_overrides: dict) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
     env.update(env_overrides)
-    # Exercise only the guard: importing bfsb.main pulls in Qt WebEngine,
+    # Exercise only the guard: importing quillon.main pulls in Qt WebEngine,
     # which is a different (and much slower) thing to be testing here.
     return subprocess.run(
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, '.');"
-         "from bfsb.main import _check_platform; _check_platform();"
+         "from quillon.main import _check_platform; _check_platform();"
          " print('PASSED')"],
         cwd=ROOT, capture_output=True, text=True, timeout=120, env=env,
     )
@@ -41,15 +41,15 @@ class PlatformSupportTests(unittest.TestCase):
         """Call the guard with sys.platform forced, which is the real path."""
         probe = (
             "import sys; sys.path.insert(0, '.');\n"
-            "from bfsb import main as m\n"
+            "from quillon import main as m\n"
             "sys.platform = 'win32'\n"
             "try:\n"
             "    m._check_platform()\n"
             "except SystemExit as e:\n"
             "    text = str(e)\n"
             "    assert 'Linux only' in text, text\n"
-            "    assert 'ghcr.io/qwikd46-dot/bfsb' in text, text\n"
-            "    assert 'BFSB_ALLOW_UNSUPPORTED_PLATFORM' in text, text\n"
+            "    assert 'ghcr.io/qwikd46-dot/quillon' in text, text\n"
+            "    assert 'QUILLON_ALLOW_UNSUPPORTED_PLATFORM' in text, text\n"
             "    print('REFUSED_OK')\n"
             "else:\n"
             "    raise AssertionError('the guard let a non-Linux platform through')\n"
@@ -64,9 +64,9 @@ class PlatformSupportTests(unittest.TestCase):
     def test_the_override_lets_a_non_linux_platform_through(self):
         probe = (
             "import sys; sys.path.insert(0, '.');\n"
-            "from bfsb import main as m\n"
+            "from quillon import main as m\n"
             "sys.platform = 'win32'\n"
-            "import os; os.environ['BFSB_ALLOW_UNSUPPORTED_PLATFORM'] = '1'\n"
+            "import os; os.environ['QUILLON_ALLOW_UNSUPPORTED_PLATFORM'] = '1'\n"
             "m._check_platform()\n"
             "print('OVERRIDE_OK')\n"
         )

@@ -1,4 +1,4 @@
-# THREAT_MODEL.md — BFSB filtering proxy
+# THREAT_MODEL.md — Quillon filtering proxy
 
 **Last reviewed:** 2026-09-24
 **Applies to:** Phase 5 proxy design and all TLS-interception behavior.
@@ -17,7 +17,7 @@ The reviewed Phase 5 scope is:
 | Everything else | No | CONNECT/SNI/DNS handling; no mitmproxy response addon |
 
 The generated `--allow-hosts` expression is built from
-`bfsb/core/proxy_bootstrap.py:ALLOW_HOSTS` and is port-anchored. It rejects
+`quillon/core/proxy_bootstrap.py:ALLOW_HOSTS` and is port-anchored. It rejects
 suffix-confusion hosts and unreviewed YouTube-family domains. The final list
 must be shown for review before this scope is treated as final.
 
@@ -32,7 +32,7 @@ must be shown for review before this scope is treated as final.
 
 | Data | Logged? | Stored where? | Retention |
 |---|---|---|---|
-| Rules-hit metadata | Yes | `~/.local/share/bfsb/proxy_events.log`; mitmproxy stdout is normally suppressed | No rotation is configured |
+| Rules-hit metadata | Yes | `~/.local/share/quillon/proxy_events.log`; mitmproxy stdout is normally suppressed | No rotation is configured |
 | Request/response bodies | No | Never written by the proxy addon | N/A |
 | Decrypted content | No | Processed in memory only | N/A |
 | Cookies/session tokens | Not by the proxy addon | Browser profile/cookie vault and normal browser history may retain them | Browser-profile policy |
@@ -45,11 +45,11 @@ subsystems may still retain ordinary visited URLs and profile data.
 
 | Item | Location | Permissions | In git repo? |
 |---|---|---:|---|
-| CA certificate (PEM) | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.pem` | 644 | No |
-| CA certificate (CER) | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.cer` | 644 | No |
-| Certificate-only P12 | `~/.bfsb/mitmproxy/mitmproxy-ca-cert.p12` | 600 | No |
-| CA private-key P12 | `~/.bfsb/mitmproxy/mitmproxy-ca.p12` | 600 | No |
-| CA private key (PEM) | `~/.bfsb/mitmproxy/mitmproxy-ca.pem` | 600 | No |
+| CA certificate (PEM) | `~/.quillon/mitmproxy/mitmproxy-ca-cert.pem` | 644 | No |
+| CA certificate (CER) | `~/.quillon/mitmproxy/mitmproxy-ca-cert.cer` | 644 | No |
+| Certificate-only P12 | `~/.quillon/mitmproxy/mitmproxy-ca-cert.p12` | 600 | No |
+| CA private-key P12 | `~/.quillon/mitmproxy/mitmproxy-ca.p12` | 600 | No |
+| CA private key (PEM) | `~/.quillon/mitmproxy/mitmproxy-ca.pem` | 600 | No |
 
 The key-bearing files are mode 600. The CA private key is not present in the
 repository or its Git history; no CA regeneration is required.
@@ -73,11 +73,11 @@ repository or its Git history; no CA regeneration is required.
    persist after shutdown and must be removed separately if persistent trust
    is not wanted.
 6. **Local-origin API boundary.** CORS and state-changing internal routes
-   accept only the BFSB loopback origins; external origins are rejected.
+   accept only the Quillon loopback origins; external origins are rejected.
 7. **Trusted URL validation.** Search results and bookmarks are restricted to
    credential-free HTTP(S) URLs before rendering or storage.
 8. **Remote debugging gate.** Chromium remote debugging is enabled only with
-   `BFSB_TEST=1`.
+   `QUILLON_TEST=1`.
 
 ## 6. Residual risks
 
@@ -86,7 +86,7 @@ repository or its Git history; no CA regeneration is required.
   this to the owning account.
 - The final generated host list still requires explicit user review before
   Phase 5 acceptance.
-- `BFSB_USE_PRIVACY_FRONTENDS=1` opts into legacy Invidious/Piped redirects;
+- `QUILLON_USE_PRIVACY_FRONTENDS=1` opts into legacy Invidious/Piped redirects;
   those frontend hosts are outside the reviewed TLS-interception scope.
 - If the user changes the TLS-interception allowlist, this document must be
   updated to reflect the expanded scope.

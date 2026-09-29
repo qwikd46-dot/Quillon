@@ -4,11 +4,11 @@ import unittest
 from pathlib import Path
 
 
-TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "bfsb" / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "quillon" / "templates"
 
 try:
     from aiohttp import ClientSession
-    from bfsb.core.server import BFSHBServer
+    from quillon.core.server import BFSHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
     BFSHBServer = None
@@ -77,17 +77,17 @@ class NewTabUrlTests(unittest.TestCase):
             await server.start()
             port = server._site._server.sockets[0].getsockname()[1]
             try:
-                # /_bfsb/* counts as state-changing, so the CORS guard wants
+                # /_quillon/* counts as state-changing, so the CORS guard wants
                 # an Origin here too.
                 headers = {"Origin": "http://127.0.0.1:8889"}
                 async with ClientSession() as session:
                     async with session.get(
-                        f"http://127.0.0.1:{port}/_bfsb/newTab?url=file:///etc/passwd",
+                        f"http://127.0.0.1:{port}/_quillon/newTab?url=file:///etc/passwd",
                         headers=headers,
                     ) as response:
                         blocked = await response.json()
                     async with session.get(
-                        f"http://127.0.0.1:{port}/_bfsb/newTab?url=https://youtube.com",
+                        f"http://127.0.0.1:{port}/_quillon/newTab?url=https://youtube.com",
                         headers=headers,
                     ) as response:
                         allowed = await response.json()

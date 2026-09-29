@@ -28,7 +28,7 @@ node_modules/
 
 # Runtime state written into the repo tree
 *.log
-bfsb_checkup.sh.lock
+quillon_checkup.sh.lock
 
 # Generated local search index (rebuilt by the crawler)
 data/index.db

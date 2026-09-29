@@ -26,8 +26,8 @@ ROOT = Path(__file__).parents[1]
 
 
 def load_module():
-    name = "bfsb_chromium_crypt_test"
-    path = ROOT / "bfsb/core/chromium_crypt.py"
+    name = "quillon_chromium_crypt_test"
+    path = ROOT / "quillon/core/chromium_crypt.py"
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -208,16 +208,16 @@ class ProfilePolicyTests(unittest.TestCase):
 
     def setUp(self):
         _app()
-        self._prev = os.environ.pop("BFSB_PERSIST_COOKIES", None)
+        self._prev = os.environ.pop("QUILLON_PERSIST_COOKIES", None)
 
     def tearDown(self):
         if self._prev is None:
-            os.environ.pop("BFSB_PERSIST_COOKIES", None)
+            os.environ.pop("QUILLON_PERSIST_COOKIES", None)
         else:
-            os.environ["BFSB_PERSIST_COOKIES"] = self._prev
+            os.environ["QUILLON_PERSIST_COOKIES"] = self._prev
 
     def test_cookies_are_not_persisted_by_default(self):
-        from bfsb.core.webengine import create_web_profile
+        from quillon.core.webengine import create_web_profile
 
         profile = create_web_profile(private=False)
         self.assertEqual(
@@ -227,8 +227,8 @@ class ProfilePolicyTests(unittest.TestCase):
         )
 
     def test_persistence_is_opt_in(self):
-        os.environ["BFSB_PERSIST_COOKIES"] = "1"
-        from bfsb.core.webengine import create_web_profile
+        os.environ["QUILLON_PERSIST_COOKIES"] = "1"
+        from quillon.core.webengine import create_web_profile
 
         profile = create_web_profile(private=False)
         self.assertEqual(
@@ -237,8 +237,8 @@ class ProfilePolicyTests(unittest.TestCase):
         )
 
     def test_private_profiles_never_persist_even_when_asked(self):
-        os.environ["BFSB_PERSIST_COOKIES"] = "1"
-        from bfsb.core.webengine import create_web_profile
+        os.environ["QUILLON_PERSIST_COOKIES"] = "1"
+        from quillon.core.webengine import create_web_profile
 
         profile = create_web_profile(private=True)
         self.assertEqual(

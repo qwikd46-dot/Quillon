@@ -1,11 +1,11 @@
 """The CORS guard on the local server.
 
 This server is reachable by anything running on the machine, and by any
-page the user visits, so "did that request really come from BFSB's own
+page the user visits, so "did that request really come from Quillon's own
 page" is a security question and not a formality. The guard had no test
 at all, which is why it is easy to weaken by accident.
 
-These tests must NOT set BFSB_TEST: that variable disables the guard
+These tests must NOT set QUILLON_TEST: that variable disables the guard
 entirely, and a test that turns the guard off cannot then claim to have
 verified it. The bypass itself is pinned separately below, with the
 environment restored afterwards.
@@ -17,16 +17,16 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES_DIR = REPO_ROOT / "bfsb" / "templates"
+TEMPLATES_DIR = REPO_ROOT / "quillon" / "templates"
 
 try:
     from aiohttp import ClientSession
-    from bfsb.core.server import BFSHBServer
+    from quillon.core.server import BFSHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
     BFSHBServer = None
 
-# Origins the guard must refuse. None of these is BFSB's own page.
+# Origins the guard must refuse. None of these is Quillon's own page.
 FOREIGN_ORIGINS = (
     "http://evil.example",
     "https://attacker.test",
@@ -35,7 +35,7 @@ FOREIGN_ORIGINS = (
     "null",
 )
 
-# The origin BFSB's own page actually sends.
+# The origin Quillon's own page actually sends.
 LOCAL_ORIGIN = "http://127.0.0.1:8889"
 
 
@@ -64,17 +64,17 @@ class _FakeWindow:
 @unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
 class CorsGuardTests(unittest.TestCase):
     def setUp(self):
-        # BFSB_TEST must not be set while the guard is under test, or
+        # QUILLON_TEST must not be set while the guard is under test, or
         # every assertion below is measuring the bypass instead.
-        self._had_flag = "BFSB_TEST" in os.environ
-        self._prev_flag = os.environ.get("BFSB_TEST")
-        os.environ.pop("BFSB_TEST", None)
+        self._had_flag = "QUILLON_TEST" in os.environ
+        self._prev_flag = os.environ.get("QUILLON_TEST")
+        os.environ.pop("QUILLON_TEST", None)
 
     def tearDown(self):
         if self._had_flag:
-            os.environ["BFSB_TEST"] = self._prev_flag
+            os.environ["QUILLON_TEST"] = self._prev_flag
         else:
-            os.environ.pop("BFSB_TEST", None)
+            os.environ.pop("QUILLON_TEST", None)
 
     def _serve(self, body):
         async def run():
@@ -93,7 +93,7 @@ class CorsGuardTests(unittest.TestCase):
         return asyncio.run(run())
 
     def test_post_without_origin_is_refused(self):
-        """A bare local caller with no Origin is not BFSB's page."""
+        """A bare local caller with no Origin is not Quillon's page."""
         async def body(session, port, window):
             async with session.post(
                 f"http://127.0.0.1:{port}/api/ui/newTab",
@@ -141,19 +141,19 @@ class CorsGuardTests(unittest.TestCase):
         self.assertIn(("new_tab", "https://example.com"), calls)
 
     def test_state_changing_get_without_origin_is_refused(self):
-        """/_bfsb/* changes state even though it is a GET."""
+        """/_quillon/* changes state even though it is a GET."""
         async def body(session, port, window):
             results = {}
             for name in ("goBack", "goForward", "reload"):
                 async with session.get(
-                    f"http://127.0.0.1:{port}/_bfsb/{name}"
+                    f"http://127.0.0.1:{port}/_quillon/{name}"
                 ) as response:
                     results[name] = response.status
             return results, list(window.calls)
 
         results, calls = self._serve(body)
         for name, status in results.items():
-            self.assertEqual(status, 403, f"/_bfsb/{name} with no Origin must be refused")
+            self.assertEqual(status, 403, f"/_quillon/{name} with no Origin must be refused")
         self.assertEqual(window_calls(calls), 0)
 
 
@@ -204,7 +204,7 @@ class CorsGuardTests(unittest.TestCase):
             self.assertEqual(status, 403, f"{path} was reachable cross-site")
 
     def test_same_origin_search_still_works(self):
-        """A same-origin fetch from BFSB's own page sends no Origin, so
+        """A same-origin fetch from Quillon's own page sends no Origin, so
         requiring one would lock the page out of its own search."""
         async def body(session, port, window):
             out = {}
@@ -236,7 +236,7 @@ class CorsGuardTests(unittest.TestCase):
         """Documents a policy question rather than asserting an answer.
 
         _is_local_origin accepts scheme in ("http", "https"), so
-        https://127.0.0.1:8889 is trusted even though BFSB's own page is
+        https://127.0.0.1:8889 is trusted even though Quillon's own page is
         served over plain http on 8889. Those are different origins, so
         this looks like an over-broad allowance. It is low severity: a
         remote page cannot forge an Origin header, and nothing is served
@@ -273,12 +273,12 @@ class CorsGuardTests(unittest.TestCase):
         blocked = self._serve(body)
         self.assertEqual(blocked, 403)
 
-        os.environ["BFSB_TEST"] = "1"
+        os.environ["QUILLON_TEST"] = "1"
         try:
             allowed = self._serve(body)
         finally:
-            os.environ.pop("BFSB_TEST", None)
-        self.assertEqual(allowed, 200, "BFSB_TEST is documented to bypass the guard")
+            os.environ.pop("QUILLON_TEST", None)
+        self.assertEqual(allowed, 200, "QUILLON_TEST is documented to bypass the guard")
 
         # And the guard is still on again afterwards.
         blocked_again = self._serve(body)
@@ -295,7 +295,7 @@ if __name__ == "__main__":
 
 @unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
 class TrustBoundaryTests(unittest.TestCase):
-    """Port 8888 is the SearXNG container, not BFSB."""
+    """Port 8888 is the SearXNG container, not Quillon."""
 
     def test_searxng_port_is_not_a_trusted_origin(self):
         self.assertTrue(BFSHBServer._is_local_origin("http://127.0.0.1:8889"))
@@ -305,7 +305,7 @@ class TrustBoundaryTests(unittest.TestCase):
                 self.assertFalse(
                     BFSHBServer._is_local_origin(origin),
                     "SearXNG is a separate network-facing service and must not "
-                    "be promoted to a trusted BFSB origin",
+                    "be promoted to a trusted Quillon origin",
                 )
 
 

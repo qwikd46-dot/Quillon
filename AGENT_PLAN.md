@@ -1,4 +1,4 @@
-# AGENT_PLAN.md — BFSB working plan
+# AGENT_PLAN.md — Quillon working plan
 
 > Repo is the memory. Chat context is disposable. Each session: read this file,
 > `PERF_NOTES.md`, and `docs/phase-N-design.md` before doing anything.
@@ -9,8 +9,8 @@ Qt6 desktop browser (home page, results page, tabs, sidebar) with:
 - Integrated **SearXNG search backend** (local, `127.0.0.1:8889` UI server → aggregator → SearXNG/engines)
 - **Local filtering proxy** on `127.0.0.1:8228` (endpoint/SNI/DNS-level ad+tracker blocking).
   Browser and proxy code both live in this repo:
-  - proxy: `bfsb/core/proxy_addon.py`, `bfsb/core/proxy_bootstrap.py`, `bfsb/core/proxy_manager.py`
-  - browser: `bfsb/` (PyQt6 + QtWebEngine), GUI pages: `bfsb/templates/bfsb_combined.html`
+  - proxy: `quillon/core/proxy_addon.py`, `quillon/core/proxy_bootstrap.py`, `quillon/core/proxy_manager.py`
+  - browser: `quillon/` (PyQt6 + QtWebEngine), GUI pages: `quillon/templates/quillon_combined.html`
 
 > NOTE (flagged, see PERF_NOTES.md): the brief says "NO HTTPS decryption", but the
 > current proxy code DOES TLS-intercept via a pinned mitmproxy CA
@@ -62,11 +62,11 @@ Design doc first: (a) detect ad requests beyond endpoint/domain within the expli
 
 1. **Phase 1** perf: workers for SQLite off event-loop/GUI-thread; GUI-thread sync-probe removal; paint deferral; incremental chrome tab sync. *(Decision in design: SPA-search "step 2" is folded into Phase 2, not done twice.)*
 2. **Phase 2** progress bar: requires SPA search (in-page fetch of `/search?format=json` + SSE per-engine events) — real event-driven bar, no timers.
-3. **Phase 3** tab logic: instrument → fix mystery-tab (default `openInNewTab=false`, popups-become-tabs policy), restore drag-reorder (`bfsb://reorderTabs`), middle-click close, full switch/close matrix tests.
+3. **Phase 3** tab logic: instrument → fix mystery-tab (default `openInNewTab=false`, popups-become-tabs policy), restore drag-reorder (`quillon://reorderTabs`), middle-click close, full switch/close matrix tests.
 4. **Phase 4** visual unification: Qt pill == HTML pill (icons inside, same metrics), remove ⋮ from Qt bar, universal left sidebar with the home category set while browsing. Before/after screenshots for sign-off.
 5. **Phase 5** proxy: fake-200 responses per content type (spinner fix), streaming passthrough for everything else, explicit minimal TLS-interception allowlist (**user decision** — see phase-5-design.md §5.0), latency benchmark.
 
 Commits: small, one logical change each, app+tests after every commit.
-Instrumentation: `[PERF]` output is gated by `BFSB_PERF=1`; timing calls and
+Instrumentation: `[PERF]` output is gated by `QUILLON_PERF=1`; timing calls and
 `# PERF-DEBUG(phase1)` markers still require a final cleanup pass before Phase 1
 can be marked complete.

@@ -25,7 +25,7 @@ def _load_sibling(name: str, relpath: str):
     return mod
 
 
-_stubbed = ("bfsb", "bfsb.core", "bfsb.core.search")
+_stubbed = ("quillon", "quillon.core", "quillon.core.search")
 _saved = {name: sys.modules.get(name) for name in _stubbed}
 for _name in _stubbed:
     _stub = types.ModuleType(_name)
@@ -33,8 +33,8 @@ for _name in _stubbed:
     sys.modules[_name] = _stub
 
 try:
-    _load_sibling("bfsb.core.search.policy", "bfsb/core/search/policy.py")
-    _load_sibling("bfsb.core.search.shortcuts", "bfsb/core/search/shortcuts.py")
+    _load_sibling("quillon.core.search.policy", "quillon/core/search/policy.py")
+    _load_sibling("quillon.core.search.shortcuts", "quillon/core/search/shortcuts.py")
 finally:
     for _name, _previous in _saved.items():
         if _previous is None:
@@ -42,7 +42,7 @@ finally:
         else:
             sys.modules[_name] = _previous
 
-spec = importlib.util.spec_from_file_location("bfsb_aggregator_test", ROOT / "bfsb/core/search/aggregator.py")
+spec = importlib.util.spec_from_file_location("quillon_aggregator_test", ROOT / "quillon/core/search/aggregator.py")
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
@@ -50,7 +50,7 @@ spec.loader.exec_module(module)
 
 class _StubShortcuts:
     def lookup(self, query):
-        from bfsb.core.search.shortcuts import ShortcutHit
+        from quillon.core.search.shortcuts import ShortcutHit
 
         if (query or "").strip().lower().startswith("youtube"):
             return ShortcutHit(key="youtube", url="https://www.youtube.com", query=query)

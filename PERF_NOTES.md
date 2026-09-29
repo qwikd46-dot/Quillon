@@ -2,7 +2,7 @@
 
 Baseline numbers were captured 2026-09-23 with offscreen Qt (`QT_QPA_PLATFORM=offscreen`),
 Python 3.14, and temporary Phase 1 instrumentation. Follow-up measurements were captured
-2026-09-24 against the running host browser. The `[PERF]` output is gated by `BFSB_PERF=1`;
+2026-09-24 against the running host browser. The `[PERF]` output is gated by `QUILLON_PERF=1`;
 timing calls remain in the code until the next cleanup pass.
 
 **Environment limits:** the baseline sandbox did not have SearXNG (127.0.0.1:8888) or
@@ -57,7 +57,7 @@ In-page Home↔Results sidebar switch (same page, `showView`): **0.3 – 2.4 ms*
 (first panel open: 54.9 ms — history fetch + list build).
 
 End-to-end single-click switch (CDP click → state flip): ~70 ms including CDP
-round-trips. The historical "needs a second click" was the `bfsb://switchTab`
+round-trips. The historical "needs a second click" was the `quillon://switchTab`
 dispatch bug (URL-normalization + case sensitivity) — already fixed and verified
 single-click now.
 
@@ -151,7 +151,7 @@ WebEngine profile, and renderer initialization.
   the sandbox, so the test was run after resetting the live instance to one home
   tab. This limitation is recorded rather than treating the run as a clean
   cold-start benchmark.
-- `[PERF]` output is gated by `BFSB_PERF=1`; the underlying timing calls and
+- `[PERF]` output is gated by `QUILLON_PERF=1`; the underlying timing calls and
   `# PERF-DEBUG(phase1)` markers remain for a later cleanup pass.
 
 ### Phase 1 disposition
@@ -162,18 +162,18 @@ verification remain open. Phase 1 is therefore **implemented but not finally acc
 
 ### Phases 2–5 implementation evidence (2026-09-24)
 
-- JSON/SSE search path, request correlation, persistent-page progress state, and native `loadProgress` wiring are implemented. The template fixture loaded in Chromium with `bfsbAction`, `runSearch`, and `setProgress` defined and no fixture errors.
+- JSON/SSE search path, request correlation, persistent-page progress state, and native `loadProgress` wiring are implemented. The template fixture loaded in Chromium with `quillonAction`, `runSearch`, and `setProgress` defined and no fixture errors.
 - Managed result-tab defaults, reorder actions, middle-click close, popup routing, incremental tab sync, and the native overlay/chrome changes are implemented. Full Qt runtime verification is still pending because the host Qt process could not be restarted from the sandbox.
 - The final local suite has 25 passing tests plus one dependency-gated skip (26 discovered). The latest real mitmproxy benchmark measured direct p50 5.07 ms / p95 18.51 ms and proxied p50 3.85 ms / p95 7.65 ms over 200 local requests; the proxy run had no measured first-byte penalty in this sample. The benchmark used the temporary runtime wrapper and isolated proxy configuration.
-- A real mitmproxy flow check verified typed 200 responses for JavaScript, GIF, JPEG, WebP, video, and JSON matches, including semantic `/api/stats/*` JSON and ad-tagged googlevideo video classification. The final allowlist is `youtube.com`, `www.youtube.com`, and `*.googlevideo.com`; the generated list still needs user review. Direct YouTube navigation is now the default; `BFSB_USE_PRIVACY_FRONTENDS=1` opts into out-of-scope frontend redirects.
+- A real mitmproxy flow check verified typed 200 responses for JavaScript, GIF, JPEG, WebP, video, and JSON matches, including semantic `/api/stats/*` JSON and ad-tagged googlevideo video classification. The final allowlist is `youtube.com`, `www.youtube.com`, and `*.googlevideo.com`; the generated list still needs user review. Direct YouTube navigation is now the default; `QUILLON_USE_PRIVACY_FRONTENDS=1` opts into out-of-scope frontend redirects.
 - YouTube player and Shorts sequence handling now preserves `ctier=SH` content streams, removes `REEL_VIDEO_TYPE_AD` entries, and carries `contentPlaybackContext.isInlinePlaybackNoAd`/`yAEB` only on normal player requests. Shorts sequence requests and SABR streaming URLs are left intact; player/embedded responses still remove ad backoff fields and the server ABR fallback URL. This targets fake-buffering/fallback without corrupting Shorts media.
 - Isolated server checks verified local-origin enforcement, rejection of external CORS origins, and filtering of script-scheme search/bookmark URLs. The native browser chrome was constructed successfully under an offscreen Qt widget runtime.
 - Full YouTube playback/no-spinner and screenshot sign-off remain open. No claim of final phase acceptance is made until those checks run.
 
 ### Lifecycle/cache follow-up (2026-09-24)
 
-- The desktop launcher now derives its own checkout path, terminates stale BFSB/proxy processes before launch, starts SearXNG asynchronously, and kills the BFSB process tree, renderer children, recorded proxy, and SearXNG container on exit.
-- `QWebEngineProfile` uses the persistent disk-cache path `~/.local/share/bfsb/webengine-cache`; the browser no longer waits for SearXNG readiness before showing the local home page.
+- The desktop launcher now derives its own checkout path, terminates stale Quillon/proxy processes before launch, starts SearXNG asynchronously, and kills the Quillon process tree, renderer children, recorded proxy, and SearXNG container on exit.
+- `QWebEngineProfile` uses the persistent disk-cache path `~/.local/share/quillon/webengine-cache`; the browser no longer waits for SearXNG readiness before showing the local home page.
 - The proxy records its PID and removes it during normal shutdown; a dummy proxy-process teardown test passed.
 - A headless launcher harness with a mocked Qt child passed process-tree cleanup. Full offscreen QtWebEngine startup remains unavailable in this sandbox because `libgssapi_krb5.so.2` is missing.
 
@@ -181,7 +181,7 @@ verification remain open. Phase 1 is therefore **implemented but not finally acc
 
 - External-site sidebar/logo, native tab/address controls, and the HTML bookmark icon use the shared dark palette and bookmark path. The sidebar smoke check covers parented visibility and 232↔64 collapse geometry.
 - Tab synchronization skips external renderers, popup tabs begin at `about:blank`, and renderer titles are cached from `titleChanged`; no synchronous `page().title()` call remains in the tab-sync path.
-- Navigation state is bridged to `window.__bfsbSetNavState`; local history state handles search/home SPA entries and direct-page loads separately.
+- Navigation state is bridged to `window.__quillonSetNavState`; local history state handles search/home SPA entries and direct-page loads separately.
 - External sidebar categories now open a separate local category view over the active website tab; the underlying site URL is unchanged. The popup has a top-right close button, Escape handling, backdrop-click dismissal, a compact category rail, explicit hash-change routing, and title synchronization from the active category.
 - The supplied KDE coredump showed `QMessageLogger::fatal` reached through a PyQt slot during `QWidget::eventFilter` mouse dispatch. The newly added tab viewport event filter was removed; local pages retain their original HTML tab strip/search bar and native chrome is only shown for external sites. Tab add/remove/click smoke passes without that filter.
 - The HTML tab strip now uses a same-origin `POST /api/ui/switchTab` bridge with the custom scheme only as fallback; this removes the fragile fetch/custom-scheme dependency when switching from local home pages.

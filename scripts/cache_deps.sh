@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Populate the BFSB dependency cache.
+# Populate the Quillon dependency cache.
 #
 # Everything the image needs is downloaded once, here, into vendor/ -- pip
 # wheels, the npm cache, and (optionally) the SearXNG source tree. The
@@ -14,15 +14,15 @@
 # The cache location defaults to ./vendor next to the repository. Point it
 # somewhere persistent -- a shared location, or a CI cache key -- with:
 #
-#   BFSB_CACHE_DIR=~/.cache/bfsb ./scripts/cache_deps.sh
+#   QUILLON_CACHE_DIR=~/.cache/quillon ./scripts/cache_deps.sh
 #
-# If BFSB_CACHE_DIR is outside the repository, the directory is symlinked to
+# If QUILLON_CACHE_DIR is outside the repository, the directory is symlinked to
 # vendor/ so the build context can still reach it.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-CACHE_DIR="${BFSB_CACHE_DIR:-$REPO_ROOT/vendor}"
+CACHE_DIR="${QUILLON_CACHE_DIR:-$REPO_ROOT/vendor}"
 VENDOR_DIR="$REPO_ROOT/vendor"
 PIP_ARGS=(--only-binary=:all: --prefer-binary)
 
@@ -125,8 +125,8 @@ fetch_npm() {
 }
 
 fetch_searxng() {
-    if [ "${BFSB_CACHE_SEARXNG:-0}" != "1" ]; then
-        log "skipping the SearXNG source cache (set BFSB_CACHE_SEARXNG=1 to include it)"
+    if [ "${QUILLON_CACHE_SEARXNG:-0}" != "1" ]; then
+        log "skipping the SearXNG source cache (set QUILLON_CACHE_SEARXNG=1 to include it)"
         return 0
     fi
     local out="$CACHE_DIR/searxng"
@@ -148,7 +148,7 @@ main() {
     fetch_npm
     fetch_searxng
     log "cache ready at $CACHE_DIR"
-    log "build with: podman build -t bfsb ."
+    log "build with: podman build -t quillon ."
 }
 
 main "$@"

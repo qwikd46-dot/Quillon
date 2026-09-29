@@ -1,14 +1,14 @@
-# BFSB — single-container build.
+# Quillon — single-container build.
 #
 # Everything the browser needs runs in here: the Qt/WebEngine UI, the
 # mitmdump ad-block proxy, the Node Ghostery engine and SearXNG. One
-# process (bfsb_supervisor) owns all of them, so the container starts and
+# process (quillon_supervisor) owns all of them, so the container starts and
 # stops as one unit.
 #
-# Build:  podman build -t bfsb .
+# Build:  podman build -t quillon .
 # Run:    podman run --rm -it --network slirp4networks \
 #             -e DISPLAY=:99 -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
-#             -v bfsb-data:/home/binwalk/.bfsb bfsb
+#             -v quillon-data:/home/binwalk/.quillon quillon
 
 FROM docker.io/library/python:3.14-slim
 
@@ -120,7 +120,7 @@ RUN set -eux; cd /usr/local/searxng; \
     # be importable before pip can even work out its metadata.
     # --no-build-isolation stops pip from hiding them in an overlay that
     # does not have them. The wheelhouse is offered as a preferred source
-    # but not made exclusive: it holds BFSB's dependency set, not all of
+    # but not made exclusive: it holds Quillon's dependency set, not all of
     # SearXNG's, so --no-index would fail here.
     pip install --no-cache-dir --find-links=/tmp/vendor/wheels \
         -r /usr/local/searxng/requirements.txt; \
@@ -134,12 +134,12 @@ RUN set -eux; cd /usr/local/searxng; \
 RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/bfsb
+WORKDIR /opt/quillon
 
 # Dependencies first so application edits do not invalidate the wheel layer.
 # PyQt6 and PyQt6-WebEngine are abi3 wheels, so they resolve for 3.14.
 COPY pyproject.toml ./
-COPY bfsb/__init__.py ./bfsb/__init__.py
+COPY quillon/__init__.py ./quillon/__init__.py
 
 # vendor/ is the dependency cache, populated by scripts/cache_deps.sh. It is
 # not committed. --find-links makes pip prefer a cached wheel and fall back
@@ -162,10 +162,10 @@ RUN pip install --no-cache-dir --find-links=/tmp/vendor/wheels \
         "mitmproxy>=12.2.3" \
         gunicorn
 # The application itself.
-COPY bfsb/ ./bfsb/
+COPY quillon/ ./quillon/
 COPY ghostery-adblocker/ ./ghostery-adblocker/
 COPY package.json package-lock.json ./
-COPY bfsb_supervisor.py bfsb_launcher.sh ./
+COPY quillon_supervisor.py quillon_launcher.sh ./
 
 # The ad-block engine's node dependencies. node_modules is not committed,
 # so this is the step a fresh clone used to be missing. A warmed npm cache
@@ -183,15 +183,15 @@ RUN set -eux; \
 # Unprivileged runtime user. The vault writes its key file under $HOME,
 # so that directory has to exist and be owned before the drop.
 RUN useradd --create-home --home-dir /home/binwalk --shell /bin/bash binwalk \
-    && mkdir -p /home/binwalk/.bfsb /tmp/runtime \
-    && chown -R binwalk:binwalk /home/binwalk /opt/bfsb /tmp/runtime
+    && mkdir -p /home/binwalk/.quillon /tmp/runtime \
+    && chown -R binwalk:binwalk /home/binwalk /opt/quillon /tmp/runtime
 USER binwalk
 
-ENV BFSB_APP_DIR=/opt/bfsb \
-    BFSB_SEARXNG_URL=http://127.0.0.1:8888 \
-    BFSB_HEADLESS=1
+ENV QUILLON_APP_DIR=/opt/quillon \
+    QUILLON_SEARXNG_URL=http://127.0.0.1:8888 \
+    QUILLON_HEADLESS=1
 
 EXPOSE 8889 8228 8888
 
 # The supervisor is PID 1 and reaps every child it starts.
-ENTRYPOINT ["python3", "/opt/bfsb/bfsb_supervisor.py"]
+ENTRYPOINT ["python3", "/opt/quillon/quillon_supervisor.py"]

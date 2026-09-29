@@ -1,4 +1,4 @@
-"""The Ghostery Node backend must not outlive BFSB.
+"""The Ghostery Node backend must not outlive Quillon.
 
 Nothing in the app called the engine's stop(), so every browser exit left
 one Node process behind, reparented to systemd --user. Seventy-one had
@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ENGINE = REPO_ROOT / "bfsb" / "core" / "ghostery_engine.py"
+ENGINE = REPO_ROOT / "quillon" / "core" / "ghostery_engine.py"
 
 HAVE_NODE = False
 for _candidate in ("node",):
@@ -46,7 +46,7 @@ class GhosteryProcessLifetimeTests(unittest.TestCase):
             import json, sys
             sys.path.insert(0, {str(REPO_ROOT)!r})
             from pathlib import Path
-            from bfsb.core.ghostery_engine import GhosteryEngineClient
+            from quillon.core.ghostery_engine import GhosteryEngineClient
 
             {extra_setup}
             repo = Path({str(REPO_ROOT / "ghostery-adblocker")!r})
@@ -94,7 +94,7 @@ class GhosteryProcessLifetimeTests(unittest.TestCase):
                 pass
         self.assertFalse(
             survived,
-            f"the Ghostery node process {pid} outlived BFSB; every browser "
+            f"the Ghostery node process {pid} outlived Quillon; every browser "
             "exit leaks one",
         )
 

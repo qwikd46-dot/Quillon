@@ -1,10 +1,10 @@
-"""BFSB UI checks for the Hermes harness.
+"""Quillon UI checks for the Hermes harness.
 
 Each check is a small function with the shape:
 
     async def check_name(cdp, display, log) -> CheckResult
 
-- ``cdp`` — the CDP wrapper (bfsb_cdp.CDP). All page-DOM interactions
+- ``cdp`` — the CDP wrapper (quillon_cdp.CDP). All page-DOM interactions
   go through it (click, hover, eval, screenshot, keypress).
 - ``display`` — the HermesDisplay, used for full-screen screenshots
   (to verify Qt widgets that aren't in the page DOM, like popovers).
@@ -23,7 +23,7 @@ What's covered:
 - BOOKMARKS   — Ctrl+D toggles
 - HISTORY     — visit URL, entry appears
 - SIDEBAR     — Ctrl+B toggles, navy underline present
-- SHUTDOWN    — closing BFSB kills SearXNG/Valkey
+- SHUTDOWN    — closing Quillon kills SearXNG/Valkey
 
 Why "continue on error": a single broken check shouldn't hide the
 others. Every check wraps its work in try/except and converts
@@ -44,23 +44,23 @@ from hermes_log import CheckResult, HermesLog
 from hermes_xvfb import HermesDisplay
 
 # Reuse the existing CDP wrapper
-from bfsb_cdp import CDP
+from quillon_cdp import CDP
 
 
 # ── Test-mode JS bridge ─────────────────────────────────────────────
-# When BFSB runs under the harness, it exposes a small JS object on
-# ``window.__bfsb_test__`` that reports Qt-side state (popover open?,
+# When Quillon runs under the harness, it exposes a small JS object on
+# ``window.__quillon_test__`` that reports Qt-side state (popover open?,
 # how many rows?, etc). This is the cleanest way to verify a popover
 # actually appeared, since Qt widgets live outside the page DOM.
 #
 # We probe for the bridge; if it's missing, the check is marked SKIP
-# (not FAIL) — the bridge is opt-in and the BFSB code may not have
+# (not FAIL) — the bridge is opt-in and the Quillon code may not have
 # been rebuilt with it yet.
 
 TEST_BRIDGE_JS = """
     (() => {
-        if (!window.__bfsb_test__) return null;
-        return JSON.stringify(window.__bfsb_test__.snapshot());
+        if (!window.__quillon_test__) return null;
+        return JSON.stringify(window.__quillon_test__.snapshot());
     })()
 """
 
@@ -135,7 +135,7 @@ def _region_is_nonempty(png_path: Path, box: tuple[int, int, int, int]) -> Optio
 def _has_navy_underline(png_path: Path, box: tuple[int, int, int, int]) -> bool:
     """True if the given region contains at least one pixel close to navy (#1a3a8a).
 
-    The BFSB side-panel "Downloads" header has a 2px navy underline.
+    The Quillon side-panel "Downloads" header has a 2px navy underline.
     We crop a horizontal strip just below the header text and check
     if any pixel is within 20 units of navy in RGB space.
     """
@@ -191,16 +191,16 @@ def _timed(
 
 @_timed
 async def check_home_renders(cdp: CDP, display: HermesDisplay, log: HermesLog) -> CheckResult:
-    """The home page must render with the BFSB title.
+    """The home page must render with the Quillon title.
 
-    While SearXNG + Valkey are still starting, BFSB shows a placeholder
-    HTML with no <title> element. The real home page (bfsb_combined.html)
-    sets <title>BFSB — Browser For Safe Browsing</title>. We wait up to
+    While SearXNG + Valkey are still starting, Quillon shows a placeholder
+    HTML with no <title> element. The real home page (quillon_combined.html)
+    sets <title>Quillon — Browser For Safe Browsing</title>. We wait up to
     20s for either the title or the home page's #aboutLink element to
     appear, which is the real readiness signal.
     """
     ok = await cdp.wait_for(
-        "document.title && document.title.toLowerCase().includes('bfsb')",
+        "document.title && document.title.toLowerCase().includes('quillon')",
         timeout=20,
     )
     title = await cdp.eval("document.title || ''")
@@ -212,7 +212,7 @@ async def check_home_renders(cdp: CDP, display: HermesDisplay, log: HermesLog) -
         detail=f"title='{title}', #aboutLink={has_about}",
         context=[
             "if both empty, the placeholder HTML is still showing",
-            "  — check that SearXNG + Valkey came up (see bfsb.log)",
+            "  — check that SearXNG + Valkey came up (see quillon.log)",
         ] if not (bool(ok) or bool(has_about)) else [],
     )
 
@@ -232,10 +232,10 @@ async def check_no_console_errors(cdp: CDP, display: HermesDisplay, log: HermesL
 
 @_timed
 async def check_new_tab(cdp: CDP, display: HermesDisplay, log: HermesLog) -> CheckResult:
-    """Pressing Ctrl+T adds a new QWebEngineView to BFSBWindow.
+    """Pressing Ctrl+T adds a new QWebEngineView to QuillonWindow.
 
-    We verify by reading the bfsb.log file for the [BFSB_TEST] marker
-    that MainWindow.new_tab prints when the BFSB_TEST env var is set.
+    We verify by reading the quillon.log file for the [QUILLON_TEST] marker
+    that MainWindow.new_tab prints when the QUILLON_TEST env var is set.
     We extract the new view count from that line and confirm it
     increased relative to the prior snapshot.
 
@@ -244,29 +244,29 @@ async def check_new_tab(cdp: CDP, display: HermesDisplay, log: HermesLog) -> Che
     profile, so CDP Target.getTargets only ever returns one page
     target regardless of how many tabs are open in the UI.
 
-    Why a keypress instead of bfsb://newTab: the navigation-request
+    Why a keypress instead of quillon://newTab: the navigation-request
     hook rejects the navigation (return False), so window.location
     never actually changes and the JS side effect is unreliable.
     The QShortcut for Ctrl+T in MainWindow._setup_window_actions
     is a window-scope shortcut that fires regardless of focus and
     reliably invokes MainWindow.new_tab().
 
-    Why not querySelectorAll('.bfsb-tab'): the tab bar is a native
+    Why not querySelectorAll('.quillon-tab'): the tab bar is a native
     Qt widget (BrowserChrome), not in the page DOM. The page
-    doesn't have a .bfsb-tab-bar at all.
+    doesn't have a .quillon-tab-bar at all.
     """
-    bfsb_log = display.log_dir / "bfsb.log"
-    if not bfsb_log.exists():
+    quillon_log = display.log_dir / "quillon.log"
+    if not quillon_log.exists():
         return CheckResult(
             name="new_tab_creates_view",
             passed=False,
             duration_s=0,
-            detail=f"bfsb.log not found at {bfsb_log}",
+            detail=f"quillon.log not found at {quillon_log}",
         )
 
-    before_size = bfsb_log.stat().st_size
-    # Drive the new-tab action through the BFSB server's test endpoint
-    # (BFSB_TEST=1 makes the server expose /test-action/newTab, which
+    before_size = quillon_log.stat().st_size
+    # Drive the new-tab action through the Quillon server's test endpoint
+    # (QUILLON_TEST=1 makes the server expose /test-action/newTab, which
     # calls MainWindow.new_tab directly). This is more reliable than
     # ydotool/Xvfb under headless X, where keyboard focus issues
     # prevent QShortcut from firing.
@@ -278,22 +278,22 @@ async def check_new_tab(cdp: CDP, display: HermesDisplay, log: HermesLog) -> Che
     await asyncio.sleep(0.5)
 
     # Read any new lines that landed after the keypress.
-    with open(bfsb_log, "rb") as f:
+    with open(quillon_log, "rb") as f:
         f.seek(before_size)
         new_bytes = f.read().decode("utf-8", errors="replace")
 
     marker_lines = [
         line for line in new_bytes.splitlines()
-        if "[BFSB_TEST] new_tab called" in line
+        if "[QUILLON_TEST] new_tab called" in line
     ]
     if not marker_lines:
         return CheckResult(
             name="new_tab_creates_view",
             passed=False,
             duration_s=0,
-            detail="no [BFSB_TEST] new_tab marker in log after Ctrl+T",
+            detail="no [QUILLON_TEST] new_tab marker in log after Ctrl+T",
             context=[
-                "is BFSB_TEST=1 exported in the BFSB launch environment?",
+                "is QUILLON_TEST=1 exported in the Quillon launch environment?",
                 f"tail of new log bytes: {new_bytes[-400:]!r}",
             ],
         )
@@ -329,7 +329,7 @@ async def check_new_tab(cdp: CDP, display: HermesDisplay, log: HermesLog) -> Che
 async def check_close_tab(cdp: CDP, display: HermesDisplay, log: HermesLog) -> CheckResult:
     """Pressing Ctrl+W closes the active tab and removes a QWebEngineView.
 
-    Verified by reading bfsb.log for the [BFSB_TEST] close_tab marker
+    Verified by reading quillon.log for the [QUILLON_TEST] close_tab marker
     (see check_new_tab for why CDP page count can't be used). The
     X button on the tab bar is a native Qt widget, so the most
     reliable way to drive it from a CDP harness is via the Ctrl+W
@@ -338,38 +338,38 @@ async def check_close_tab(cdp: CDP, display: HermesDisplay, log: HermesLog) -> C
     current index — but only if more than one tab exists, so this
     check must run after check_new_tab.
     """
-    bfsb_log = display.log_dir / "bfsb.log"
-    if not bfsb_log.exists():
+    quillon_log = display.log_dir / "quillon.log"
+    if not quillon_log.exists():
         return CheckResult(
             name="close_tab_removes_view",
             passed=False,
             duration_s=0,
-            detail=f"bfsb.log not found at {bfsb_log}",
+            detail=f"quillon.log not found at {quillon_log}",
         )
 
-    before_size = bfsb_log.stat().st_size
+    before_size = quillon_log.stat().st_size
     # Drive the close-tab action through the server's test endpoint.
     triggered = await cdp.test_action("closeTab")
     if not triggered:
         await cdp.ydotool_keypress("ctrl+w")
     await asyncio.sleep(0.5)
 
-    with open(bfsb_log, "rb") as f:
+    with open(quillon_log, "rb") as f:
         f.seek(before_size)
         new_bytes = f.read().decode("utf-8", errors="replace")
 
     marker_lines = [
         line for line in new_bytes.splitlines()
-        if "[BFSB_TEST] close_tab called" in line
+        if "[QUILLON_TEST] close_tab called" in line
     ]
     if not marker_lines:
         return CheckResult(
             name="close_tab_removes_view",
             passed=False,
             duration_s=0,
-            detail="no [BFSB_TEST] close_tab marker in log after Ctrl+W",
+            detail="no [QUILLON_TEST] close_tab marker in log after Ctrl+W",
             context=[
-                "is BFSB_TEST=1 exported in the BFSB launch environment?",
+                "is QUILLON_TEST=1 exported in the Quillon launch environment?",
                 f"tail of new log bytes: {new_bytes[-400:]!r}",
             ],
         )
@@ -388,8 +388,8 @@ async def check_url_submit(cdp: CDP, display: HermesDisplay, log: HermesLog) -> 
     """Submitting a URL in the address bar navigates the active tab."""
     # Drive the native chrome URL bar via ydotool-style click + type.
     # Coordinates are approximate (nav bar is near the top of the window).
-    # For a robust test, use the existing bfsb://navigate bridge.
-    await cdp.eval("window.location.href = 'bfsb://navigate?url=https%3A%2F%2Fexample.com'")
+    # For a robust test, use the existing quillon://navigate bridge.
+    await cdp.eval("window.location.href = 'quillon://navigate?url=https%3A%2F%2Fexample.com'")
     await cdp.wait_for("location.hostname === 'example.com'", timeout=10)
     return CheckResult(
         name="url_bar_submit_navigates",
@@ -401,13 +401,13 @@ async def check_url_submit(cdp: CDP, display: HermesDisplay, log: HermesLog) -> 
 
 @_timed
 async def check_menu_opens(cdp: CDP, display: HermesDisplay, log: HermesLog) -> CheckResult:
-    """Clicking the ⋮ button opens the BFSBMenu.
+    """Clicking the ⋮ button opens the QuillonMenu.
 
     The ⋮ button is a native Qt widget, not in the page DOM, so we
-    trigger the menu via the BFSB server's test endpoint (which calls
+    trigger the menu via the Quillon server's test endpoint (which calls
     MainWindow._show_main_menu directly) rather than ydotool. We then
     query the Qt-side state via ``/test-state`` (also a server route
-    registered when BFSB_TEST=1) and assert ``menu_open=true``.
+    registered when QUILLON_TEST=1) and assert ``menu_open=true``.
 
     Why not a screenshot diff: bare Xvfb without a window manager does
     not composite Qt's Popup windows onto the framebuffer, so the
@@ -427,7 +427,7 @@ async def check_menu_opens(cdp: CDP, display: HermesDisplay, log: HermesLog) -> 
             name="menu_button_opens_menu",
             passed=False,
             duration_s=0,
-            detail="showMainMenu test action returned non-200 (BFSB_TEST env missing?)",
+            detail="showMainMenu test action returned non-200 (QUILLON_TEST env missing?)",
         )
     await asyncio.sleep(0.3)
     # Use the Qt-side state probe rather than a screenshot diff —
@@ -449,7 +449,7 @@ async def check_menu_opens(cdp: CDP, display: HermesDisplay, log: HermesLog) -> 
         ),
         context=[] if menu_open else [
             "showMainMenu fired but /test-state reports menu_open=false",
-            "  — check that BFSBMenu.popup() actually calls show() and",
+            "  — check that QuillonMenu.popup() actually calls show() and",
             "    that _active_menu is set in _show_main_menu",
             "  — also confirm BFSHBServer._main_window is set",
         ],
@@ -502,7 +502,7 @@ async def check_popover_bookmarks(cdp: CDP, display: HermesDisplay, log: HermesL
         context=[] if (popover_open and history_closed) else [
             "hoverBookmarks test action fired but the Bookmarks popover is not visible",
             "  — verify _on_menu_row_hovered is wired in _show_main_menu and",
-            "    that BFSBMenu.hovered signal is connected",
+            "    that QuillonMenu.hovered signal is connected",
             "  — also check that BookmarksPopover.show_and_focus actually shows",
         ],
     )
@@ -561,8 +561,8 @@ async def check_downloads(cdp: CDP, display: HermesDisplay, log: HermesLog) -> C
     so the next run starts clean.
 
     We use ``window.location = ...`` via Runtime.evaluate rather than
-    Page.navigate, because bfsb_cdp has no ``navigate`` helper and the
-    navigation-request interceptor in BFSB's chrome rejects many
+    Page.navigate, because quillon_cdp has no ``navigate`` helper and the
+    navigation-request interceptor in Quillon's chrome rejects many
     cross-origin navigations. The test URL is on our own origin so
     the interceptor lets it through.
     """
@@ -590,7 +590,7 @@ async def check_downloads(cdp: CDP, display: HermesDisplay, log: HermesLog) -> C
         )
 
     # 2. Navigate to the test fixture. window.location is the most
-    #    reliable driver here — the bfsb:// scheme and direct Page.navigate
+    #    reliable driver here — the quillon:// scheme and direct Page.navigate
     #    aren't available through this CDP wrapper.
     try:
         await cdp.eval(f"window.location = {test_url!r}")
@@ -682,7 +682,7 @@ async def check_sidebar_navy(cdp: CDP, display: HermesDisplay, log: HermesLog) -
     after_path = Path("/tmp/hermes-sidebar.png")
     display.screenshot(before_path)
 
-    # Drive _toggle_side_panel directly through the BFSB server's test
+    # Drive _toggle_side_panel directly through the Quillon server's test
     # endpoint. ydotool can't reliably deliver Ctrl+B to the QMainWindow
     # under Xvfb (focus/window-tree issues), so the test endpoint is
     # the canonical way to do this from the harness.
@@ -699,7 +699,7 @@ async def check_sidebar_navy(cdp: CDP, display: HermesDisplay, log: HermesLog) -
             name="sidebar_navy_underline",
             passed=False,
             duration_s=0,
-            detail="toggleSidebar test action returned non-200 (BFSB_TEST env missing?)",
+            detail="toggleSidebar test action returned non-200 (QUILLON_TEST env missing?)",
         )
     await asyncio.sleep(0.5)
 
@@ -751,21 +751,21 @@ async def check_console_clean(cdp: CDP, display: HermesDisplay, log: HermesLog) 
 
 @_timed
 async def check_bookmarks_have_entries(cdp: CDP, display: HermesDisplay, log: HermesLog) -> CheckResult:
-    """Verify the BFSB bookmark store is wired up and reachable.
+    """Verify the Quillon bookmark store is wired up and reachable.
 
     The page DOM is *not* a reliable signal — by the time this check
-    runs the BFSB page may have been navigated away (e.g. to a
+    runs the Quillon page may have been navigated away (e.g. to a
     "blocked" page from a security check, or to about:blank), and the
     home page only renders briefly at startup. The data store is the
     thing we actually care about, so we try these signals in order:
 
-      1. ``window.__bfsb_test__?.bookmark_count`` — Qt-side state, exact.
+      1. ``window.__quillon_test__?.bookmark_count`` — Qt-side state, exact.
       2. Navigate to ``http://127.0.0.1:8889/`` and wait up to 10s for
-         the document title to include "BFSB" (case insensitive). This
-         proves the BFSB Qt process is up and serving the home page,
+         the document title to include "Quillon" (case insensitive). This
+         proves the Quillon Qt process is up and serving the home page,
          which means the ``BookmarkStore`` was constructed on startup.
       3. ``fetch('http://127.0.0.1:8889/').ok`` — last-resort proof
-         that the BFSB server is alive at all.
+         that the Quillon server is alive at all.
 
     An empty store is *not* a failure: a fresh profile has no bookmarks
     yet. We PASS with a warning note in that case.
@@ -795,8 +795,8 @@ async def check_bookmarks_have_entries(cdp: CDP, display: HermesDisplay, log: He
                 context=["no bookmarks yet — Ctrl+D on a page to add one"],
             )
 
-    # 2) Fallback: navigate back to the BFSB home page and wait for
-    #    the title to include "BFSB". The home page may render only
+    # 2) Fallback: navigate back to the Quillon home page and wait for
+    #    the title to include "Quillon". The home page may render only
     #    briefly at startup, so if the active tab has been navigated
     #    away, this restores the signal we need.
     try:
@@ -805,7 +805,7 @@ async def check_bookmarks_have_entries(cdp: CDP, display: HermesDisplay, log: He
         # If even the eval failed, fall through to the fetch probe.
         pass
     title_ok = await cdp.wait_for(
-        "document.title && document.title.toLowerCase().includes('bfsb')",
+        "document.title && document.title.toLowerCase().includes('quillon')",
         timeout=10,
     )
     if title_ok:
@@ -813,10 +813,10 @@ async def check_bookmarks_have_entries(cdp: CDP, display: HermesDisplay, log: He
             name="bookmarks_have_entries",
             passed=True,
             duration_s=0,
-            detail="BFSB home page reachable; BookmarkStore constructed on startup (test bridge absent — empty store tolerated)",
+            detail="Quillon home page reachable; BookmarkStore constructed on startup (test bridge absent — empty store tolerated)",
         )
 
-    # 3) Last-resort: prove the BFSB server is up at all. This catches
+    # 3) Last-resort: prove the Quillon server is up at all. This catches
     #    "Qt process died but Xvfb is still alive" cases.
     try:
         server_ok = await cdp.eval(
@@ -829,32 +829,32 @@ async def check_bookmarks_have_entries(cdp: CDP, display: HermesDisplay, log: He
             name="bookmarks_have_entries",
             passed=True,
             duration_s=0,
-            detail="BFSB server alive on :8889 (title not yet set; BookmarkStore should be constructed)",
+            detail="Quillon server alive on :8889 (title not yet set; BookmarkStore should be constructed)",
         )
 
     return CheckResult(
         name="bookmarks_have_entries",
         passed=False,
         duration_s=0,
-        detail="could not reach the BFSB data store via test bridge, home page, or server probe",
+        detail="could not reach the Quillon data store via test bridge, home page, or server probe",
         context=[
-            "test bridge absent — BFSB was not rebuilt with __bfsb_test__",
-            "navigating to http://127.0.0.1:8889/ did not produce a BFSB title within 10s",
-            "  — check that the BFSB Qt process is up (ps aux | grep bfsb)",
+            "test bridge absent — Quillon was not rebuilt with __quillon_test__",
+            "navigating to http://127.0.0.1:8889/ did not produce a Quillon title within 10s",
+            "  — check that the Quillon Qt process is up (ps aux | grep quillon)",
             "  — and that the embedded page is connected to the right profile",
             "fetch probe of http://127.0.0.1:8889/ also failed",
-            "  — BFSB server may not be running; check bfsb.log",
+            "  — Quillon server may not be running; check quillon.log",
         ],
     )
 
 
 @_timed
 async def check_history_has_entries(cdp: CDP, display: HermesDisplay, log: HermesLog) -> CheckResult:
-    """Verify the BFSB history store is wired up and reachable.
+    """Verify the Quillon history store is wired up and reachable.
 
     Mirrors ``check_bookmarks_have_entries`` in spirit: try the test
     bridge first (it reports ``history_count`` off the ``HistoryStore``),
-    then navigate back to the BFSB home page and wait for the title,
+    then navigate back to the Quillon home page and wait for the title,
     then fall back to a server-alive fetch. An empty history is
     tolerated (a fresh profile has no navigations yet).
 
@@ -886,13 +886,13 @@ async def check_history_has_entries(cdp: CDP, display: HermesDisplay, log: Herme
                 context=["no history yet — visit a page to record one"],
             )
 
-    # Navigate back to the BFSB home page and wait for the title.
+    # Navigate back to the Quillon home page and wait for the title.
     try:
         await cdp.eval("window.location.href = 'http://127.0.0.1:8889/'")
     except Exception:
         pass
     title_ok = await cdp.wait_for(
-        "document.title && document.title.toLowerCase().includes('bfsb')",
+        "document.title && document.title.toLowerCase().includes('quillon')",
         timeout=10,
     )
     if title_ok:
@@ -900,10 +900,10 @@ async def check_history_has_entries(cdp: CDP, display: HermesDisplay, log: Herme
             name="history_has_entries",
             passed=True,
             duration_s=0,
-            detail="BFSB home page reachable; HistoryStore constructed on startup (test bridge absent — empty store tolerated)",
+            detail="Quillon home page reachable; HistoryStore constructed on startup (test bridge absent — empty store tolerated)",
         )
 
-    # Last-resort: prove the BFSB server is up at all.
+    # Last-resort: prove the Quillon server is up at all.
     try:
         server_ok = await cdp.eval(
             "(async () => { try { const r = await fetch('http://127.0.0.1:8889/'); return !!r.ok; } catch (e) { return false; } })()"
@@ -915,21 +915,21 @@ async def check_history_has_entries(cdp: CDP, display: HermesDisplay, log: Herme
             name="history_has_entries",
             passed=True,
             duration_s=0,
-            detail="BFSB server alive on :8889 (title not yet set; HistoryStore should be constructed)",
+            detail="Quillon server alive on :8889 (title not yet set; HistoryStore should be constructed)",
         )
 
     return CheckResult(
         name="history_has_entries",
         passed=False,
         duration_s=0,
-        detail="could not reach the BFSB data store via test bridge, home page, or server probe",
+        detail="could not reach the Quillon data store via test bridge, home page, or server probe",
         context=[
-            "test bridge absent — BFSB was not rebuilt with __bfsb_test__",
-            "navigating to http://127.0.0.1:8889/ did not produce a BFSB title within 10s",
-            "  — check that the BFSB Qt process is up (ps aux | grep bfsb)",
+            "test bridge absent — Quillon was not rebuilt with __quillon_test__",
+            "navigating to http://127.0.0.1:8889/ did not produce a Quillon title within 10s",
+            "  — check that the Quillon Qt process is up (ps aux | grep quillon)",
             "  — and that the embedded page is connected to the right profile",
             "fetch probe of http://127.0.0.1:8889/ also failed",
-            "  — BFSB server may not be running; check bfsb.log",
+            "  — Quillon server may not be running; check quillon.log",
         ],
     )
 

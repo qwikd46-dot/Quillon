@@ -10,13 +10,13 @@ ROOT = Path(__file__).parents[1]
 
 
 def _load_with_stubs(name, relpath, siblings):
-    """Load a bfsb submodule standalone, stubbing the package chain.
+    """Load a quillon submodule standalone, stubbing the package chain.
 
-    Importing through the real ``bfsb`` package pulls in the whole
+    Importing through the real ``quillon`` package pulls in the whole
     runtime (cryptography, PyQt6, ...), so the parent packages are
     replaced with empty stubs and the needed siblings are pre-loaded.
     """
-    stubbed = ("bfsb", "bfsb.core", "bfsb.core.search")
+    stubbed = ("quillon", "quillon.core", "quillon.core.search")
     saved = {n: sys.modules.get(n) for n in stubbed}
     for n in stubbed:
         stub = types.ModuleType(n)
@@ -30,7 +30,7 @@ def _load_with_stubs(name, relpath, siblings):
             sys.modules[sibling_name] = mod
             spec.loader.exec_module(mod)
             loaded[sibling_name] = mod
-        setattr(sys.modules["bfsb.core.search"], name.rsplit(".", 1)[-1], loaded.get(name))
+        setattr(sys.modules["quillon.core.search"], name.rsplit(".", 1)[-1], loaded.get(name))
         spec = importlib.util.spec_from_file_location(name, ROOT / relpath)
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
@@ -45,14 +45,14 @@ def _load_with_stubs(name, relpath, siblings):
 
 
 safety = _load_with_stubs(
-    "bfsb.core.search.safety",
-    "bfsb/core/search/safety.py",
+    "quillon.core.search.safety",
+    "quillon/core/search/safety.py",
     [],
 )
 yf = _load_with_stubs(
-    "bfsb_youtube_filter_test",
-    "bfsb/core/youtube_filter.py",
-    [("bfsb.core.search.safety", "bfsb/core/search/safety.py")],
+    "quillon_youtube_filter_test",
+    "quillon/core/youtube_filter.py",
+    [("quillon.core.search.safety", "quillon/core/search/safety.py")],
 )
 
 
@@ -96,15 +96,15 @@ class TermMatchingTests(unittest.TestCase):
         self.assertIsNotNone(yf.matched_term("anal play video"))
 
     def test_disabled_by_env(self):
-        previous = os.environ.get("BFSB_YOUTUBE_STRICT_FILTER")
-        os.environ["BFSB_YOUTUBE_STRICT_FILTER"] = "0"
+        previous = os.environ.get("QUILLON_YOUTUBE_STRICT_FILTER")
+        os.environ["QUILLON_YOUTUBE_STRICT_FILTER"] = "0"
         try:
             self.assertFalse(yf.enabled())
         finally:
             if previous is None:
-                os.environ.pop("BFSB_YOUTUBE_STRICT_FILTER", None)
+                os.environ.pop("QUILLON_YOUTUBE_STRICT_FILTER", None)
             else:
-                os.environ["BFSB_YOUTUBE_STRICT_FILTER"] = previous
+                os.environ["QUILLON_YOUTUBE_STRICT_FILTER"] = previous
         self.assertTrue(yf.enabled())
 
 
@@ -256,7 +256,7 @@ class DictValueItemTests(unittest.TestCase):
     live-update path was structurally unfiltered."""
 
     def test_item_reached_as_a_dict_value_is_removed(self):
-        from bfsb.core import youtube_filter
+        from quillon.core import youtube_filter
 
         payload = {
             "frameworkUpdates": {
@@ -279,7 +279,7 @@ class DictValueItemTests(unittest.TestCase):
         self.assertTrue(hits)
 
     def test_long_metadata_no_longer_protects_an_item(self):
-        from bfsb.core import youtube_filter
+        from quillon.core import youtube_filter
 
         long_snippet = {"runs": [{"text": "word " * 400}]}
         items = [
@@ -295,7 +295,7 @@ class DictValueItemTests(unittest.TestCase):
         self.assertEqual(removed, 1, "extra metadata let the item through")
 
     def test_ordinary_items_survive(self):
-        from bfsb.core import youtube_filter
+        from quillon.core import youtube_filter
 
         items = [{"videoRenderer": {"videoId": "ok", "title": {"runs": [{"text": "Rust tutorial 2026"}]}}}]
         removed, _ = youtube_filter.filter_tree(items)

@@ -1,0 +1,94 @@
+"""CLI driver for the Quillon custom crawler.
+
+Usage:
+    python -m quillon.core.search.crawl_runner <url>           # fetch one page
+    python -m quillon.core.search.crawl_runner <url> --recursive
+    python -m quillon.core.search.crawl_runner <url> --max-pages 50
+
+Outputs to data/crawled/<doc_id>.json (and .html if --keep-html).
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import sys
+from pathlib import Path
+
+from quillon.core.search.crawler import Crawler
+
+
+async def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Quillon custom crawler — fetch a URL (or same-domain links recursively)"
+    )
+    parser.add_argument("url", help="URL to fetch")
+    parser.add_argument(
+        "--recursive", action="store_true",
+        help="Follow same-domain links (BFS, polite)",
+    )
+    parser.add_argument(
+        "--max-pages", type=int, default=20,
+        help="Max pages in recursive mode (default: 20)",
+    )
+    parser.add_argument(
+        "--data-dir", default="/home/zon/quillon/data/crawled",
+        help="Where to write JSON files",
+    )
+    parser.add_argument(
+        "--delay", type=float, default=1.0,
+        help="Seconds between requests per domain (default: 1.0)",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="Suppress per-page status output",
+    )
+    args = parser.parse_args()
+
+    crawler = Crawler(
+        data_dir=Path(args.data_dir),
+        delay_seconds=args.delay,
+    )
+
+    if not args.recursive:
+        result = await crawler.fetch(args.url)
+        path, _ = crawler.save(result)
+        if not args.quiet:
+            print(f"URL:    {result.url}")
+            print(f"Status: {result.status_code} {result.content_type}")
+            print(f"Title:  {result.title[:80]}")
+            print(f"Text:   {len(result.text)} chars, {len(result.out_links)} out-links")
+            print(f"Saved:  {path}")
+            if result.error:
+                print(f"Error:  {result.error}")
+        return 0 if result.ok else 1
+
+    # Recursive BFS
+    visited: set[str] = set()
+    queue: list[str] = [args.url]
+    total_ok = 0
+    total_fail = 0
+    while queue and len(visited) < args.max_pages:
+        url = queue.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+        result = await crawler.fetch(url)
+        crawler.save(result)
+        if result.ok:
+            total_ok += 1
+            if not args.quiet:
+                print(f"[{len(visited):>3}/{args.max_pages}] OK  {result.title[:60]:<60}  {url[:60]}")
+            queue.extend(l for l in result.out_links if l not in visited)
+        else:
+            total_fail += 1
+            if not args.quiet:
+                print(f"[{len(visited):>3}/{args.max_pages}] ERR {result.error or result.status_code}  {url[:60]}")
+
+    if not args.quiet:
+        print(f"\nDone: {total_ok} ok / {total_fail} fail / {len(visited)} attempted")
+    return 0 if total_fail == 0 else 2
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))

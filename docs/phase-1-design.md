@@ -20,7 +20,7 @@ Measurements: see `PERF_NOTES.md` (all numbers below reference it).
    stop adding our own overhead to it.
 4. **`_sync_chrome_tabs` full rebuild per switch** (7-15 ms, O(tabs)) — only measurable
    tab-switch waste; total switch cost is ~9-19 ms, i.e. already effectively instant.
-   The reported "second click" was the `bfsb://switchTab` dispatch bug (fixed earlier
+   The reported "second click" was the `quillon://switchTab` dispatch bug (fixed earlier
    today, verified single-click ~70 ms end-to-end incl. CDP overhead).
 5. **`_rewrite_youtube_url` sync probe on the GUI thread** (up to 150 ms stall on cache
    miss per navigation) — flagged; fix proposed below since it directly hits both
@@ -29,11 +29,11 @@ Measurements: see `PERF_NOTES.md` (all numbers below reference it).
 ## Proposed changes (files touched, risk)
 
 ### 1. Stop doing SQLite on the event loop / GUI thread — move it to a worker
-- `bfsb/core/server.py` `handle_search`: replace sync `HistoryStore().record(...)`
+- `quillon/core/server.py` `handle_search`: replace sync `HistoryStore().record(...)`
   with `asyncio.to_thread(...)` (server-side; no GUI involvement).
-- `bfsb/core/webengine.py` `_record_visit`: hop the DB write to a `concurrent.futures`
+- `quillon/core/webengine.py` `_record_visit`: hop the DB write to a `concurrent.futures`
   worker via a small module-level single-thread executor (GUI thread only queues).
-- `bfsb/ui/main_window.py` `_update_chrome_for_current`: make the bookmark lookup
+- `quillon/ui/main_window.py` `_update_chrome_for_current`: make the bookmark lookup
   async (QTimer/worker callback) or cache per-URL in the chrome until the worker
   answers; star state updates when the result arrives.
 - Files: `server.py`, `webengine.py`, `main_window.py`. Risk: low (best-effort
@@ -59,7 +59,7 @@ Measurements: see `PERF_NOTES.md` (all numbers below reference it).
   no full navigation at all; results view toggles in-page. This changes the
   progress-bar hooks (Phase 2 wants per-engine events anyway) — propose doing 1 now
   and deciding 2 together with Phase 2 design.
-- Files: `templates/bfsb_combined.html` (+ `server.py` for the JSON route in step 2).
+- Files: `templates/quillon_combined.html` (+ `server.py` for the JSON route in step 2).
   Risk: step 1 low; step 2 medium (state/bookmark/history wiring must move to the
   SPA flow) — needs its own sign-off.
 
@@ -71,7 +71,7 @@ Measurements: see `PERF_NOTES.md` (all numbers below reference it).
 
 ### 5. Instrumentation removal at phase end
 - All `# PERF-DEBUG(phase1)` marks removed after final before/after re-measure, or
-  converted into the permanent `[PERF]` log line behind an env flag (`BFSB_PERF=1`).
+  converted into the permanent `[PERF]` log line behind an env flag (`QUILLON_PERF=1`).
 
 ## Non-goals (reported, not touched)
 - mitmproxy/proxy internals (Phase 5).

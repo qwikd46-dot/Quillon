@@ -1,0 +1,174 @@
+"""Tab management for the Quillon browser."""
+
+from typing import Callable, Optional
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QScrollArea, QPushButton
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+
+from .components import create_tab_widget, update_tab_style
+from .styles import DIMS, STYLES
+
+
+def _s(key: str) -> str:
+    """Get style from STYLES dict."""
+    return STYLES.get(key, "")
+
+
+class TabManager:
+    """Manages browser tabs and tab bar UI."""
+
+    def __init__(
+        self,
+        parent: QWidget,
+        on_tab_switch: Callable[[int], None],
+        on_tab_close: Callable[[QWidget], None],
+        on_new_tab: Callable[[], None],
+    ) -> None:
+        self._parent = parent
+        self._on_tab_switch = on_tab_switch
+        self._on_tab_close = on_tab_close
+        self._on_new_tab = on_new_tab
+
+        # Internal state
+        self._tab_widgets: list[QWidget] = []
+        self._tab_views: list[QWebEngineView] = []
+        self._active_index: int = -1
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        """Create tab bar UI."""
+        self.tab_bar = QWidget()
+        self.tab_bar.setFixedHeight(DIMS.TAB_BAR_HEIGHT)
+        self.tab_bar.setStyleSheet(_s("TAB_BAR"))
+
+        layout = QHBoxLayout(self.tab_bar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Scrollable tab container (left side, stretches)
+        self.tab_scroll = QScrollArea()
+        self.tab_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tab_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tab_scroll.setWidgetResizable(True)
+        self.tab_scroll.setStyleSheet(_s("SCROLL_AREA"))
+        layout.addWidget(self.tab_scroll, 1)
+
+        # Inner tab container
+        self.tab_inner = QWidget()
+        self.tab_inner.setStyleSheet("background: transparent; border: none;")
+        self.tab_inner_layout = QHBoxLayout(self.tab_inner)
+        self.tab_inner_layout.setContentsMargins(0, 0, 0, 0)
+        self.tab_inner_layout.setSpacing(2)
+        self.tab_inner_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.tab_scroll.setWidget(self.tab_inner)
+
+        # New tab (+) button at the far right
+        self.new_tab_btn = QPushButton("+")
+        self.new_tab_btn.setFixedSize(DIMS.BTN_SIZE, DIMS.BTN_SIZE)
+        self.new_tab_btn.setStyleSheet(_s("PLUS_BUTTON"))
+        self.new_tab_btn.clicked.connect(self._on_new_tab)
+        layout.addWidget(self.new_tab_btn)
+
+    # ────────────────────────────────
+    # Public API
+    # ────────────────────────────────
+
+    def add_tab(
+        self,
+        view: QWebEngineView,
+        title: str,
+        index: int,
+    ) -> QWidget:
+        """Add a new tab to the tab bar at the given index."""
+        tab_widget = create_tab_widget(
+            title=title,
+            close_callback=self._on_tab_close,
+            index=index,
+        )
+
+        # Wire click: left-click switches tab; close button click is separate
+        tab_widget.mousePressEvent = lambda e, t=tab_widget: self._on_tab_click(t)
+
+        self._tab_widgets.insert(index, tab_widget)
+        self._tab_views.insert(index, view)
+
+        self.tab_inner_layout.insertWidget(index, tab_widget)
+        return tab_widget
+
+    def remove_tab(self, tab_widget: QWidget) -> None:
+        """Remove tab by widget reference."""
+        try:
+            index = self._tab_widgets.index(tab_widget)
+        except ValueError:
+            return
+
+        if index < 0 or index >= len(self._tab_widgets):
+            return
+
+        self._tab_widgets.pop(index)
+        self._tab_views.pop(index)
+
+        self.tab_inner_layout.removeWidget(tab_widget)
+        tab_widget.deleteLater()
+
+        # Recompute active index
+        if self._active_index >= len(self._tab_widgets):
+            self._active_index = max(0, len(self._tab_widgets) - 1)
+
+    def set_active(self, index: int) -> None:
+        """Set active tab and re-render all tab styles."""
+        self._active_index = index
+        for i, tab in enumerate(self._tab_widgets):
+            is_active = (i == index)
+            close_btn = getattr(tab, 'close_btn', None)
+            update_tab_style(tab, is_active, close_btn)
+
+    def update_title(self, index: int, title: str) -> None:
+        """Update tab title."""
+        if 0 <= index < len(self._tab_widgets):
+            label = getattr(self._tab_widgets[index], 'title_label', None)
+            if label:
+                label.setText(title)
+
+    def get_view(self, index: int) -> Optional[QWebEngineView]:
+        """Get web view at index."""
+        if 0 <= index < len(self._tab_views):
+            return self._tab_views[index]
+        return None
+
+    def get_active_index(self) -> int:
+        """Return the index of the currently active tab."""
+        return self._active_index
+
+    def get_tab_widget(self, index: int) -> Optional[QWidget]:
+        """Get tab widget at index."""
+        if 0 <= index < len(self._tab_widgets):
+            return self._tab_widgets[index]
+        return None
+
+    # ────────────────────────────────
+    # Properties
+    # ────────────────────────────────
+
+    @property
+    def count(self) -> int:
+        """Number of tabs."""
+        return len(self._tab_widgets)
+
+    @property
+    def tab_bar_widget(self) -> QWidget:
+        """Get the tab bar container widget."""
+        return self.tab_bar
+
+    # ────────────────────────────────
+    # Private helpers
+    # ────────────────────────────────
+
+    def _on_tab_click(self, tab: QWidget) -> None:
+        """Handle a tab being clicked (switch to it)."""
+        try:
+            index = self._tab_widgets.index(tab)
+        except ValueError:
+            return
+        self._on_tab_switch(index)

@@ -3,11 +3,11 @@ import unittest
 from pathlib import Path
 
 
-TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "bfsb" / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "quillon" / "templates"
 
 try:
     from aiohttp import ClientSession
-    from bfsb.core.server import BFSHBServer
+    from quillon.core.server import BFSHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
     BFSHBServer = None
@@ -17,7 +17,7 @@ class SearchProgressTests(unittest.TestCase):
     @unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
     def test_json_and_sse_share_request_lifecycle(self):
         async def run():
-            from bfsb.core import server as server_module
+            from quillon.core import server as server_module
 
             original = server_module.search_async
 
