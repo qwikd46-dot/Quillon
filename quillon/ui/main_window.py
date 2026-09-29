@@ -40,7 +40,7 @@ from ..core import (
     QuillonPage,
     get_server,
     shutdown_server,
-    BFSHBServer,
+    QuillonHBServer,
     set_quillon_action_target,
     RequestInterceptor,
 )
@@ -99,7 +99,7 @@ class QuillonWindow(QMainWindow):
         self._bookmark_checked.connect(self._on_bookmark_checked)
 
         # Server
-        self._server: Optional[BFSHBServer] = None
+        self._server: Optional[QuillonHBServer] = None
         self._server_loop: Optional[asyncio.AbstractEventLoop] = None
         self._server_ready = False
 

@@ -21,10 +21,10 @@ TEMPLATES_DIR = REPO_ROOT / "quillon" / "templates"
 
 try:
     from aiohttp import ClientSession
-    from quillon.core.server import BFSHBServer
+    from quillon.core.server import QuillonHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
-    BFSHBServer = None
+    QuillonHBServer = None
 
 # Origins the guard must refuse. None of these is Quillon's own page.
 FOREIGN_ORIGINS = (
@@ -61,7 +61,7 @@ class _FakeWindow:
         self.calls.append(("reload",))
 
 
-@unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
+@unittest.skipIf(QuillonHBServer is None, "project runtime dependencies are unavailable")
 class CorsGuardTests(unittest.TestCase):
     def setUp(self):
         # QUILLON_TEST must not be set while the guard is under test, or
@@ -78,7 +78,7 @@ class CorsGuardTests(unittest.TestCase):
 
     def _serve(self, body):
         async def run():
-            server = BFSHBServer(TEMPLATES_DIR, port=0)
+            server = QuillonHBServer(TEMPLATES_DIR, port=0)
             window = _FakeWindow()
             server._run_on_qt = lambda fn, timeout=5.0: fn(window)
             await server.start()
@@ -293,23 +293,23 @@ if __name__ == "__main__":
     unittest.main()
 
 
-@unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
+@unittest.skipIf(QuillonHBServer is None, "project runtime dependencies are unavailable")
 class TrustBoundaryTests(unittest.TestCase):
     """Port 8888 is the SearXNG container, not Quillon."""
 
     def test_searxng_port_is_not_a_trusted_origin(self):
-        self.assertTrue(BFSHBServer._is_local_origin("http://127.0.0.1:8889"))
-        self.assertTrue(BFSHBServer._is_local_origin("http://localhost:8889"))
+        self.assertTrue(QuillonHBServer._is_local_origin("http://127.0.0.1:8889"))
+        self.assertTrue(QuillonHBServer._is_local_origin("http://localhost:8889"))
         for origin in ("http://127.0.0.1:8888", "http://localhost:8888"):
             with self.subTest(origin=origin):
                 self.assertFalse(
-                    BFSHBServer._is_local_origin(origin),
+                    QuillonHBServer._is_local_origin(origin),
                     "SearXNG is a separate network-facing service and must not "
                     "be promoted to a trusted Quillon origin",
                 )
 
 
-@unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
+@unittest.skipIf(QuillonHBServer is None, "project runtime dependencies are unavailable")
 class QtHopDoesNotBlockTheLoopTests(unittest.TestCase):
     """_run_on_qt blocks on a threading.Event. Called from an async handler
     it froze the whole server for up to 5s per request."""
@@ -318,7 +318,7 @@ class QtHopDoesNotBlockTheLoopTests(unittest.TestCase):
         import time
 
         async def run():
-            server = BFSHBServer(TEMPLATES_DIR, port=0)
+            server = QuillonHBServer(TEMPLATES_DIR, port=0)
             server._run_on_qt = lambda fn, timeout=5.0: (time.sleep(2.0), fn(None))[1]
             await server.start()
             port = server._site._server.sockets[0].getsockname()[1]

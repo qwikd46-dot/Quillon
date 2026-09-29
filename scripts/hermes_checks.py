@@ -451,7 +451,7 @@ async def check_menu_opens(cdp: CDP, display: HermesDisplay, log: HermesLog) -> 
             "showMainMenu fired but /test-state reports menu_open=false",
             "  — check that QuillonMenu.popup() actually calls show() and",
             "    that _active_menu is set in _show_main_menu",
-            "  — also confirm BFSHBServer._main_window is set",
+            "  — also confirm QuillonHBServer._main_window is set",
         ],
     )
 

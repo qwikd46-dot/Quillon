@@ -8,10 +8,10 @@ TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "quillon" / "templates"
 
 try:
     from aiohttp import ClientSession
-    from quillon.core.server import BFSHBServer
+    from quillon.core.server import QuillonHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
-    BFSHBServer = None
+    QuillonHBServer = None
 
 
 class _FakeWindow:
@@ -28,10 +28,10 @@ class _FakeWindow:
 
 
 class NewTabUrlTests(unittest.TestCase):
-    @unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
+    @unittest.skipIf(QuillonHBServer is None, "project runtime dependencies are unavailable")
     def test_post_opens_validated_url_and_rejects_other_schemes(self):
         async def run():
-            server = BFSHBServer(TEMPLATES_DIR, port=0)
+            server = QuillonHBServer(TEMPLATES_DIR, port=0)
             window = _FakeWindow()
             server._run_on_qt = lambda fn, timeout=5.0: fn(window)
             await server.start()
@@ -68,10 +68,10 @@ class NewTabUrlTests(unittest.TestCase):
         self.assertFalse(bad_js["ok"])
         self.assertEqual(urls, ["https://youtube.com", None])
 
-    @unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
+    @unittest.skipIf(QuillonHBServer is None, "project runtime dependencies are unavailable")
     def test_get_route_rejects_non_http_scheme(self):
         async def run():
-            server = BFSHBServer(TEMPLATES_DIR, port=0)
+            server = QuillonHBServer(TEMPLATES_DIR, port=0)
             window = _FakeWindow()
             server._run_on_qt = lambda fn, timeout=5.0: fn(window)
             await server.start()

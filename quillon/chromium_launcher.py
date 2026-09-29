@@ -28,10 +28,10 @@ def _server_ready(url: str) -> bool:
 
 
 async def _start_local_server(host: str, port: int):
-    from .core.server import BFSHBServer
+    from .core.server import QuillonHBServer
 
     template_dir = Path(__file__).parent / "templates"
-    server = BFSHBServer(template_dir, host=host, port=port)
+    server = QuillonHBServer(template_dir, host=host, port=port)
     await server.start()
     return server
 

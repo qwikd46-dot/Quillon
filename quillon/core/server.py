@@ -108,7 +108,7 @@ SEARCH_HANDBACK_URL = "https://duckduckgo.com/?q={q}"
 _VAULT_STATUS_TTL = 5.0
 
 
-class BFSHBServer:
+class QuillonHBServer:
     """Local HTTP server for Quillon browser."""
 
     def __init__(
@@ -241,7 +241,7 @@ class BFSHBServer:
     @web.middleware
     async def _cors_middleware(request: Request, handler):
         origin = request.headers.get("Origin", "")
-        if origin and not BFSHBServer._is_local_origin(origin):
+        if origin and not QuillonHBServer._is_local_origin(origin):
             return web.json_response({"error": "origin not allowed"}, status=403)
         # A same-origin fetch from Quillon's own page sends NO Origin header
         # (Origin is only added for cross-origin and non-GET requests), so
@@ -408,7 +408,7 @@ class BFSHBServer:
             marks = BookmarkStore().list_all(limit=limit) or []
             out = []
             for m in marks:
-                safe_url = BFSHBServer._safe_external_url(m.url)
+                safe_url = QuillonHBServer._safe_external_url(m.url)
                 if safe_url is None:
                     continue
                 title = (m.title or safe_url or '').strip() or safe_url
@@ -1546,7 +1546,7 @@ class BFSHBServer:
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
         await self._site.start()
-        print(f"[BFSHBServer] Started on http://{self.host}:{self.port}")
+        print(f"[QuillonHBServer] Started on http://{self.host}:{self.port}")
 
     async def stop(self) -> None:
         """Stop the server."""
@@ -1558,7 +1558,7 @@ class BFSHBServer:
             await self._site.stop()
         if self._runner:
             await self._runner.cleanup()
-        print("[BFSHBServer] Stopped")
+        print("[QuillonHBServer] Stopped")
 
     @property
     def base_url(self) -> str:
@@ -1574,7 +1574,7 @@ class BFSHBServer:
 
 
 # Global server instance
-_server_instance: Optional[BFSHBServer] = None
+_server_instance: Optional[QuillonHBServer] = None
 
 
 # --- module-level helper for handle_search ---------------------------------
@@ -1624,12 +1624,12 @@ def make_empty_infobox() -> str:
     )
 
 
-async def get_server() -> BFSHBServer:
+async def get_server() -> QuillonHBServer:
     """Get or create the global server instance."""
     global _server_instance
     if _server_instance is None:
         template_dir = Path(__file__).parent.parent / "templates"
-        _server_instance = BFSHBServer(template_dir)
+        _server_instance = QuillonHBServer(template_dir)
         await _server_instance.start()
     return _server_instance
 

@@ -18,10 +18,10 @@ SERVER_PATH = REPO_ROOT / "quillon" / "core" / "server.py"
 
 try:
     from aiohttp import ClientSession
-    from quillon.core.server import BFSHBServer
+    from quillon.core.server import QuillonHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
-    BFSHBServer = None
+    QuillonHBServer = None
 
 # A term safety.terms() is expected to flag, used to drive the blocked
 # search render path.
@@ -70,13 +70,13 @@ def _template_source() -> str:
     return TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
-@unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
+@unittest.skipIf(QuillonHBServer is None, "project runtime dependencies are unavailable")
 class VaultNoticeRenderTests(unittest.TestCase):
     """Renders real pages through a real server."""
 
     def _fetch(self, available, error, paths, storage_mode="keyring"):
         async def run():
-            server = BFSHBServer(TEMPLATES_DIR, port=0)
+            server = QuillonHBServer(TEMPLATES_DIR, port=0)
             server._main_window = _FakeWindow(available, error, storage_mode)
             server._run_on_qt = lambda fn, timeout=5.0: fn(server._main_window)
             await server.start()

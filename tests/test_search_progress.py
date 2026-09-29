@@ -7,14 +7,14 @@ TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "quillon" / "templates"
 
 try:
     from aiohttp import ClientSession
-    from quillon.core.server import BFSHBServer
+    from quillon.core.server import QuillonHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
-    BFSHBServer = None
+    QuillonHBServer = None
 
 
 class SearchProgressTests(unittest.TestCase):
-    @unittest.skipIf(BFSHBServer is None, "project runtime dependencies are unavailable")
+    @unittest.skipIf(QuillonHBServer is None, "project runtime dependencies are unavailable")
     def test_json_and_sse_share_request_lifecycle(self):
         async def run():
             from quillon.core import server as server_module
@@ -31,7 +31,7 @@ class SearchProgressTests(unittest.TestCase):
                 )
 
             server_module.search_async = fake_search
-            server = BFSHBServer(TEMPLATES_DIR, port=0)
+            server = QuillonHBServer(TEMPLATES_DIR, port=0)
             server._bookmarks_json = lambda: "[]"
             await server.start()
             port = server._site._server.sockets[0].getsockname()[1]
