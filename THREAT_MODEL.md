@@ -78,6 +78,12 @@ repository or its Git history; no CA regeneration is required.
    credential-free HTTP(S) URLs before rendering or storage.
 8. **Remote debugging gate.** Chromium remote debugging is enabled only with
    `QUILLON_TEST=1`.
+9. **Hardened local responses.** Every response from the UI server carries
+   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+   `X-Frame-Options: DENY`, `Cross-Origin-Resource-Policy: same-origin` and a
+   restrictive `Permissions-Policy`; every non-static response is
+   `Cache-Control: no-store` so search results, bookmarks and history are not
+   written to the persistent WebEngine disk cache.
 
 ## 6. Residual risks
 

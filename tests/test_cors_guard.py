@@ -347,3 +347,75 @@ class QtHopDoesNotBlockTheLoopTests(unittest.TestCase):
             elapsed, 0.5,
             "a blocked Qt hop froze the event loop; run_in_executor must be used",
         )
+
+
+@unittest.skipIf(QuillonHBServer is None, "project runtime dependencies are unavailable")
+class SecurityHeaderTests(unittest.TestCase):
+    """Every response must carry the hardening headers.
+
+    They are cheap defence in depth: without them a page the user visits
+    could frame the UI, sniff a response's declared type, read a Quillon
+    resource cross-origin, or learn the query-bearing local URL as a
+    referrer. The headers must also survive a refused request, not just a
+    served one.
+    """
+
+    def _serve(self, body):
+        async def run():
+            server = QuillonHBServer(TEMPLATES_DIR, port=0)
+            window = _FakeWindow()
+            server._run_on_qt = lambda fn, timeout=5.0: fn(window)
+            await server.start()
+            port = server._site._server.sockets[0].getsockname()[1]
+            try:
+                async with ClientSession() as session:
+                    return await body(session, port)
+            finally:
+                await server.stop()
+
+        return asyncio.run(run())
+
+    def _assert_hardened(self, headers):
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("Referrer-Policy"), "no-referrer")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+        self.assertEqual(headers.get("Cross-Origin-Resource-Policy"), "same-origin")
+        self.assertEqual(headers.get("Cache-Control"), "no-store")
+
+    def test_served_response_carries_security_headers(self):
+        async def body(session, port):
+            async with session.get(f"http://127.0.0.1:{port}/health") as response:
+                return response.status, dict(response.headers)
+
+        status, headers = self._serve(body)
+        self.assertEqual(status, 200)
+        self._assert_hardened(headers)
+
+    def test_refused_response_carries_security_headers(self):
+        async def body(session, port):
+            async with session.post(
+                f"http://127.0.0.1:{port}/api/ui/newTab",
+                data='{"url": "https://example.com"}',
+                headers={
+                    "Origin": "http://evil.example",
+                    "Content-Type": "application/json",
+                },
+            ) as response:
+                return response.status, dict(response.headers)
+
+        status, headers = self._serve(body)
+        self.assertEqual(status, 403)
+        self._assert_hardened(headers)
+
+    def test_static_assets_stay_cacheable(self):
+        """no-store is scoped away from /static so the large icon is cached."""
+        async def body(session, port):
+            async with session.get(
+                f"http://127.0.0.1:{port}/static/quillon-home-logo.png"
+            ) as response:
+                return response.status, dict(response.headers)
+
+        status, headers = self._serve(body)
+        self.assertEqual(status, 200)
+        self.assertNotIn("no-store", headers.get("Cache-Control", ""))
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")

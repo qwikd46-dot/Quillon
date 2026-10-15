@@ -107,6 +107,36 @@ SEARCH_HANDBACK_URL = "https://duckduckgo.com/?q={q}"
 # without the database moving, such as the OS keyring locking.
 _VAULT_STATUS_TTL = 5.0
 
+# Security headers applied to every response the local UI server sends.
+# The server is reachable from any page the user visits and is same-origin
+# with Quillon's own page, so these are defence in depth: no MIME sniffing,
+# no framing of the UI (clickjacking), no referrer leaking the query-bearing
+# local URL to sites the user clicks through to, no cross-origin reads of
+# Quillon resources, no disk caching of bookmarks/history/search pages, and
+# no access to powerful device APIs from the UI document.
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=(), usb=(), payment=(), serial=()",
+}
+
+
+def _harden_response(response: Response, request_path: str = "") -> Response:
+    """Add the security headers to a response without clobbering its own.
+
+    Static assets stay cacheable (they are immutable, and one of them is
+    large); every other response -- the rendered UI, search results, and the
+    bookmark/history/download JSON -- is marked no-store so none of it lands
+    in the persistent WebEngine disk cache.
+    """
+    for key, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(key, value)
+    if not request_path.startswith("/static/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
 
 class QuillonHBServer:
     """Local HTTP server for Quillon browser."""
@@ -244,7 +274,7 @@ class QuillonHBServer:
     async def _cors_middleware(request: Request, handler):
         origin = request.headers.get("Origin", "")
         if origin and not QuillonHBServer._is_local_origin(origin):
-            return web.json_response({"error": "origin not allowed"}, status=403)
+            return _harden_response(web.json_response({"error": "origin not allowed"}, status=403), request.path)
         # A same-origin fetch from Quillon's own page sends NO Origin header
         # (Origin is only added for cross-origin and non-GET requests), so
         # demanding Origin would lock out the page itself. The browser
@@ -256,9 +286,9 @@ class QuillonHBServer:
         # /api/search/progress (which creates and evicts server state).
         fetch_site = (request.headers.get("Sec-Fetch-Site") or "").lower()
         if fetch_site in ("cross-site", "same-site") and request.method not in ("GET", "HEAD", "OPTIONS"):
-            return web.json_response({"error": "cross-site request refused"}, status=403)
+            return _harden_response(web.json_response({"error": "cross-site request refused"}, status=403), request.path)
         if fetch_site == "cross-site" and request.path in ("/search", "/api/search/progress"):
-            return web.json_response({"error": "cross-site request refused"}, status=403)
+            return _harden_response(web.json_response({"error": "cross-site request refused"}, status=403), request.path)
         state_changing_get = request.path.startswith("/_quillon/") or request.path.startswith("/api/ui/")
         # request.host is the client-supplied Host header, so using it to
         # decide "is this a local API request" let the caller certify itself:
@@ -270,9 +300,9 @@ class QuillonHBServer:
         bound = f"{request.app.get('quillon_bound_host', '')}:{request.app.get('quillon_bound_port', '')}"
         local_api_request = request.path.startswith("/api/ui/") and request.host == bound
         if state_changing_get and not origin and not local_api_request and os.environ.get("QUILLON_TEST") != "1":
-            return web.json_response({"error": "origin required"}, status=403)
+            return _harden_response(web.json_response({"error": "origin required"}, status=403), request.path)
         if request.method not in ("GET", "HEAD", "OPTIONS") and not origin and not local_api_request and os.environ.get("QUILLON_TEST") != "1":
-            return web.json_response({"error": "origin required"}, status=403)
+            return _harden_response(web.json_response({"error": "origin required"}, status=403), request.path)
         if request.method == "OPTIONS":
             response = web.Response(status=204)
         else:
@@ -282,7 +312,7 @@ class QuillonHBServer:
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
             response.headers['Vary'] = 'Origin'
-        return response
+        return _harden_response(response, request.path)
 
     async def handle_home(self, request: Request) -> Response:
         """Serve home page - rendered through Jinja2 with PAGE_TYPE='home'."""
