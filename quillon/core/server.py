@@ -1279,10 +1279,6 @@ class QuillonHBServer:
         return '<div class="infobox"><div class="infobox-title">Info</div><div style="color:#55556a;">No additional info available</div></div>'
 
 
-    async def handle_about_page(self, request: Request) -> Response:
-        """Serve about page."""
-        return web.Response(text='<html><body>Quillon Browser - About</body></html>', content_type='text/html')
-
     async def handle_preferences_page(self, request: Request) -> Response:
         """Serve preferences page."""
         template = self.jinja_env.get_template('quillon_combined.html')

@@ -4,51 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 from .bookmarks import BookmarkStore
 from .db import BrowserDB
-
-
-def _chrome_walk(node: dict, folder_id_lookup) -> Iterable[tuple[str, str, int]]:
-    """Yield (type, url, folder_id) for Chrome bookmarks JSON node.
-
-    Chrome's format:
-        {"type": "url",    "url": "...", "name": "..."}
-        {"type": "folder", "children": [...]}
-    """
-    node_type = node.get("type")
-    if node_type == "url":
-        yield ("url", node.get("url", ""), node.get("name", node.get("url", "")))
-    elif node_type == "folder":
-        folder_id = folder_id_lookup(node.get("name", ""))
-        for child in node.get("children", []) or []:
-            if child.get("type") == "url":
-                yield ("url", child.get("url", ""), child.get("name", child.get("url", "")))
-            elif child.get("type") == "folder":
-                # Recurse with the new folder as the parent
-                sub_id = folder_id_lookup(child.get("name", ""))
-                for grand in child.get("children", []) or []:
-                    yield from _chrome_walk(grand, lambda _n: sub_id)
-
-
-def _firefox_walk(node: dict, folder_id_lookup) -> Iterable[tuple[str, str, str, int]]:
-    """Yield (type, url, name, folder_id) for Firefox bookmarks HTML/JSON.
-
-    Firefox JSON (places export) uses this shape:
-        {"guid": "...", "type": "bookmark", "title": "...", "url": "...", "children": []}
-        {"type": "folder", "title": "...", "children": [...]}
-    """
-    node_type = node.get("type")
-    title = node.get("title", node.get("name", ""))
-    if node_type in ("bookmark", "url"):
-        url = node.get("url") or node.get("uri", "")
-        yield ("url", url, title, node.get("parent_folder_id", 1))
-    elif node_type == "folder":
-        folder_name = title or "Imported"
-        folder_id = folder_id_lookup(folder_name)
-        for child in node.get("children", []) or []:
-            yield from _firefox_walk(child, folder_id_lookup)
 
 
 def import_chrome_json(path: str | Path, store: Optional[BookmarkStore] = None) -> int:
