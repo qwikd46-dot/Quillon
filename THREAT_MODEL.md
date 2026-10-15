@@ -72,8 +72,14 @@ repository or its Git history; no CA regeneration is required.
    the browser; the generated CA and any browser-profile trust entry can
    persist after shutdown and must be removed separately if persistent trust
    is not wanted.
-6. **Local-origin API boundary.** CORS and state-changing internal routes
-   accept only the Quillon loopback origins; external origins are rejected.
+6. **Local-origin API boundary + per-session token.** CORS accepts only the
+   Quillon loopback origins, and every state-changing route (the POST APIs and
+   the `/_quillon/*` GETs) additionally requires a per-session token that the
+   server hands to its own page as an HttpOnly, `SameSite=Strict` cookie. A
+   page on another origin cannot read or send it, and a caller that never
+   fetched the page holds none. This replaces the old Host-header locality
+   test, which a caller could assert for itself. External origins are
+   rejected.
 7. **Trusted URL validation.** Search results and bookmarks are restricted to
    credential-free HTTP(S) URLs before rendering or storage.
 8. **Remote debugging gate.** Chromium remote debugging is enabled only with

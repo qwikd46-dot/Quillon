@@ -7,7 +7,7 @@ from pathlib import Path
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "quillon" / "templates"
 
 try:
-    from aiohttp import ClientSession
+    from aiohttp import ClientSession, CookieJar
     from quillon.core.server import QuillonHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
@@ -37,7 +37,11 @@ class NewTabUrlTests(unittest.TestCase):
             await server.start()
             port = server._site._server.sockets[0].getsockname()[1]
             try:
-                async with ClientSession() as session:
+                async with ClientSession(cookie_jar=CookieJar(unsafe=True)) as session:
+                    # A real page load hands the document its per-session
+                    # token cookie; prime it the same way before posting.
+                    await session.get(f"http://127.0.0.1:{port}/health")
+
                     async def post(payload):
                         # The server binds an ephemeral port in tests, which is
                         # not a "local origin", so the CORS guard would 403 a
@@ -80,7 +84,8 @@ class NewTabUrlTests(unittest.TestCase):
                 # /_quillon/* counts as state-changing, so the CORS guard wants
                 # an Origin here too.
                 headers = {"Origin": "http://127.0.0.1:8889"}
-                async with ClientSession() as session:
+                async with ClientSession(cookie_jar=CookieJar(unsafe=True)) as session:
+                    await session.get(f"http://127.0.0.1:{port}/health")
                     async with session.get(
                         f"http://127.0.0.1:{port}/_quillon/newTab?url=file:///etc/passwd",
                         headers=headers,

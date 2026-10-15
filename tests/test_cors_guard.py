@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = REPO_ROOT / "quillon" / "templates"
 
 try:
-    from aiohttp import ClientSession
+    from aiohttp import ClientSession, CookieJar
     from quillon.core.server import QuillonHBServer
 except (ImportError, ModuleNotFoundError):
     ClientSession = None
@@ -76,7 +76,7 @@ class CorsGuardTests(unittest.TestCase):
         else:
             os.environ.pop("QUILLON_TEST", None)
 
-    def _serve(self, body):
+    def _serve(self, body, prime_token=True):
         async def run():
             server = QuillonHBServer(TEMPLATES_DIR, port=0)
             window = _FakeWindow()
@@ -84,7 +84,14 @@ class CorsGuardTests(unittest.TestCase):
             await server.start()
             port = server._site._server.sockets[0].getsockname()[1]
             try:
-                async with ClientSession() as session:
+                async with ClientSession(cookie_jar=CookieJar(unsafe=True)) as session:
+                    if prime_token:
+                        # A real page load is what hands the document its
+                        # per-session token cookie; the page's own fetches
+                        # then carry it. Prime it the same way, unless the
+                        # test is proving that a request without it is
+                        # refused.
+                        await session.get(f"http://127.0.0.1:{port}/health")
                     result = await body(session, port, window)
             finally:
                 await server.stop()
@@ -92,8 +99,8 @@ class CorsGuardTests(unittest.TestCase):
 
         return asyncio.run(run())
 
-    def test_post_without_origin_is_refused(self):
-        """A bare local caller with no Origin is not Quillon's page."""
+    def test_post_without_a_token_is_refused(self):
+        """A caller that never fetched the page holds no token."""
         async def body(session, port, window):
             async with session.post(
                 f"http://127.0.0.1:{port}/api/ui/newTab",
@@ -102,8 +109,8 @@ class CorsGuardTests(unittest.TestCase):
             ) as response:
                 return response.status, (await response.json()), list(window.calls)
 
-        status, payload, calls = self._serve(body)
-        self.assertEqual(status, 403, "a POST with no Origin must be refused")
+        status, payload, calls = self._serve(body, prime_token=False)
+        self.assertEqual(status, 403, "a POST with no token must be refused")
         self.assertEqual(window_calls(calls), 0, "the handler must not have run")
 
     def test_post_from_a_foreign_origin_is_refused(self):
@@ -140,7 +147,47 @@ class CorsGuardTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(("new_tab", "https://example.com"), calls)
 
-    def test_state_changing_get_without_origin_is_refused(self):
+    def test_state_changing_request_with_token_needs_no_origin(self):
+        """The token, not the (forgeable) Origin, authorises the page."""
+        async def body(session, port, window):
+            async with session.post(
+                f"http://127.0.0.1:{port}/api/ui/newTab",
+                data='{"url": "https://example.com"}',
+                headers={"Content-Type": "application/json"},
+            ) as response:
+                return response.status, list(window.calls)
+
+        status, calls = self._serve(body)  # primes the token cookie
+        self.assertEqual(status, 200)
+        self.assertIn(("new_tab", "https://example.com"), calls)
+
+    def test_a_forged_token_is_refused(self):
+        async def body(session, port, window):
+            async with session.post(
+                f"http://127.0.0.1:{port}/api/ui/newTab",
+                data='{"url": "https://example.com"}',
+                headers={"Content-Type": "application/json"},
+                cookies={"quillon_token": "not-the-real-token"},
+            ) as response:
+                return response.status, list(window.calls)
+
+        status, calls = self._serve(body, prime_token=False)
+        self.assertEqual(status, 403)
+        self.assertEqual(window_calls(calls), 0)
+
+    def test_token_cookie_is_httponly_and_samesite_strict(self):
+        async def body(session, port, window):
+            async with session.get(f"http://127.0.0.1:{port}/health") as response:
+                return response.headers.getall("Set-Cookie", [])
+
+        cookies = self._serve(body, prime_token=False)
+        self.assertTrue(cookies, "a page load must issue a token cookie")
+        header = " ".join(cookies).lower()
+        self.assertIn("quillon_token=", header)
+        self.assertIn("httponly", header)
+        self.assertIn("samesite=strict", header)
+
+    def test_state_changing_get_without_a_token_is_refused(self):
         """/_quillon/* changes state even though it is a GET."""
         async def body(session, port, window):
             results = {}
@@ -151,21 +198,19 @@ class CorsGuardTests(unittest.TestCase):
                     results[name] = response.status
             return results, list(window.calls)
 
-        results, calls = self._serve(body)
+        results, calls = self._serve(body, prime_token=False)
         for name, status in results.items():
-            self.assertEqual(status, 403, f"/_quillon/{name} with no Origin must be refused")
+            self.assertEqual(status, 403, f"/_quillon/{name} with no token must be refused")
         self.assertEqual(window_calls(calls), 0)
 
 
     def test_spoofed_host_header_cannot_certify_a_local_api_request(self):
         """A caller must not be able to declare itself local.
 
-        local_api_request used to be computed from request.host, which is
-        the client-supplied Host header. Sending "Host: 127.0.0.1:8889"
-        therefore skipped every origin check, and on the real port that
-        header is what a browser sends anyway -- so the guard was a no-op
-        for all of /api/ui/* in production while still passing the tests,
-        which all ran on an ephemeral port.
+        The guard used to treat a request as local when its Host header
+        matched the bound address, but the caller supplies that header, so a
+        forged Host skipped the origin check. Authorisation is now the
+        per-session token, which a forged Host does not carry.
         """
         for host in ("127.0.0.1:8889", "127.0.0.1:8888", "localhost:8889"):
             with self.subTest(host=host):
@@ -177,7 +222,7 @@ class CorsGuardTests(unittest.TestCase):
                     ) as response:
                         return response.status, list(window.calls)
 
-                status, calls = self._serve(body)
+                status, calls = self._serve(body, prime_token=False)
                 self.assertEqual(
                     status, 403,
                     f"Host: {host} was accepted as proof of locality",
@@ -270,18 +315,18 @@ class CorsGuardTests(unittest.TestCase):
             ) as response:
                 return response.status
 
-        blocked = self._serve(body)
+        blocked = self._serve(body, prime_token=False)
         self.assertEqual(blocked, 403)
 
         os.environ["QUILLON_TEST"] = "1"
         try:
-            allowed = self._serve(body)
+            allowed = self._serve(body, prime_token=False)
         finally:
             os.environ.pop("QUILLON_TEST", None)
         self.assertEqual(allowed, 200, "QUILLON_TEST is documented to bypass the guard")
 
         # And the guard is still on again afterwards.
-        blocked_again = self._serve(body)
+        blocked_again = self._serve(body, prime_token=False)
         self.assertEqual(blocked_again, 403)
 
 
@@ -323,7 +368,10 @@ class QtHopDoesNotBlockTheLoopTests(unittest.TestCase):
             await server.start()
             port = server._site._server.sockets[0].getsockname()[1]
             try:
-                async with ClientSession() as session:
+                async with ClientSession(cookie_jar=CookieJar(unsafe=True)) as session:
+                    # Prime the token cookie so the POSTs actually reach the
+                    # Qt hop this test is about, instead of being refused.
+                    await session.get(f"http://127.0.0.1:{port}/health")
                     headers = {"Origin": LOCAL_ORIGIN, "Content-Type": "application/json"}
 
                     async def slow_post():

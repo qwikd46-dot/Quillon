@@ -8,9 +8,11 @@ Runs on localhost:8888 (or configurable port).
 from __future__ import annotations
 
 import asyncio
+import hmac
 import html
 import json
 import os
+import secrets
 import time
 import uuid
 from pathlib import Path
@@ -138,6 +140,48 @@ def _harden_response(response: Response, request_path: str = "") -> Response:
     return response
 
 
+# Name of the per-session token cookie. The UI document gets it from any
+# response it loads and its own same-origin fetches/EventSource send it back
+# automatically, so no page-side change is needed.
+_TOKEN_COOKIE = "quillon_token"
+
+
+def _request_has_token(request: Request) -> bool:
+    """True when the request carries this server's per-session token.
+
+    The token reaches only documents this server itself served, as an
+    HttpOnly, SameSite=Strict cookie. A page on another origin cannot read it
+    and the browser will not attach it to a cross-site request, so this is a
+    real CSRF boundary -- unlike the old Host-header test, which any caller
+    could simply assert.
+    """
+    expected = request.app.get("quillon_api_token") or ""
+    if not expected:
+        return False
+    supplied = (
+        request.headers.get("X-Quillon-Token")
+        or request.cookies.get(_TOKEN_COOKIE)
+        or ""
+    )
+    return hmac.compare_digest(supplied, expected)
+
+
+def _finish(request: Request, response: Response) -> Response:
+    """Issue/refresh the token cookie and add the security headers.
+
+    The cookie is (re)issued on a successful response whenever the client is
+    not already holding the current token, so a client whose session cookie
+    is stale recovers on its next page load. It is deliberately *not* handed
+    out on a refusal, so a rejected request cannot be used to obtain one.
+    """
+    token = request.app.get("quillon_api_token") or ""
+    if token and response.status < 400 and request.cookies.get(_TOKEN_COOKIE) != token:
+        response.set_cookie(
+            _TOKEN_COOKIE, token, path="/", httponly=True, samesite="Strict"
+        )
+    return _harden_response(response, request.path)
+
+
 class QuillonHBServer:
     """Local HTTP server for Quillon browser."""
 
@@ -156,6 +200,11 @@ class QuillonHBServer:
         self._main_window = None
         # ((available, error), checked_at, db_signature) for _vault_status.
         self._vault_cache: tuple = (None, 0.0, None)
+        # Per-session CSRF token. It is handed to the UI document as an
+        # HttpOnly, SameSite=Strict cookie and required on every state-
+        # changing request, so a page on another origin -- or any caller that
+        # has not fetched the page -- cannot drive the window.
+        self._api_token = secrets.token_urlsafe(32)
 
         # Jinja2 environment for template rendering
         self.jinja_env = Environment(
@@ -180,6 +229,7 @@ class QuillonHBServer:
         # client-supplied Host header to prove the caller is local.
         app["quillon_bound_host"] = self.host
         app["quillon_bound_port"] = self.port
+        app["quillon_api_token"] = self._api_token
 
         # Routes
         app.router.add_get('/', self.handle_home)
@@ -274,7 +324,7 @@ class QuillonHBServer:
     async def _cors_middleware(request: Request, handler):
         origin = request.headers.get("Origin", "")
         if origin and not QuillonHBServer._is_local_origin(origin):
-            return _harden_response(web.json_response({"error": "origin not allowed"}, status=403), request.path)
+            return _finish(request, web.json_response({"error": "origin not allowed"}, status=403))
         # A same-origin fetch from Quillon's own page sends NO Origin header
         # (Origin is only added for cross-origin and non-GET requests), so
         # demanding Origin would lock out the page itself. The browser
@@ -286,23 +336,21 @@ class QuillonHBServer:
         # /api/search/progress (which creates and evicts server state).
         fetch_site = (request.headers.get("Sec-Fetch-Site") or "").lower()
         if fetch_site in ("cross-site", "same-site") and request.method not in ("GET", "HEAD", "OPTIONS"):
-            return _harden_response(web.json_response({"error": "cross-site request refused"}, status=403), request.path)
+            return _finish(request, web.json_response({"error": "cross-site request refused"}, status=403))
         if fetch_site == "cross-site" and request.path in ("/search", "/api/search/progress"):
-            return _harden_response(web.json_response({"error": "cross-site request refused"}, status=403), request.path)
-        state_changing_get = request.path.startswith("/_quillon/") or request.path.startswith("/api/ui/")
-        # request.host is the client-supplied Host header, so using it to
-        # decide "is this a local API request" let the caller certify itself:
-        # any request claiming Host: 127.0.0.1:8889 skipped every check
-        # below. Compare against the address this server actually bound.
-        # Note this is still not authentication — Host and Origin are both
-        # self-asserted, so a local process can forge either. See the
-        # token discussion before relying on this as a trust boundary.
-        bound = f"{request.app.get('quillon_bound_host', '')}:{request.app.get('quillon_bound_port', '')}"
-        local_api_request = request.path.startswith("/api/ui/") and request.host == bound
-        if state_changing_get and not origin and not local_api_request and os.environ.get("QUILLON_TEST") != "1":
-            return _harden_response(web.json_response({"error": "origin required"}, status=403), request.path)
-        if request.method not in ("GET", "HEAD", "OPTIONS") and not origin and not local_api_request and os.environ.get("QUILLON_TEST") != "1":
-            return _harden_response(web.json_response({"error": "origin required"}, status=403), request.path)
+            return _finish(request, web.json_response({"error": "cross-site request refused"}, status=403))
+        # Authentication, not merely origin: every state-changing route (the
+        # POST APIs and the state-changing /_quillon/* GETs) must carry the
+        # per-session token. It replaces the old Host-header locality test,
+        # which a caller could assert for itself; the token is what a page on
+        # another origin cannot satisfy.
+        needs_token = (
+            request.path.startswith("/_quillon/")
+            or request.path.startswith("/api/ui/")
+            or request.method not in ("GET", "HEAD", "OPTIONS")
+        )
+        if needs_token and not _request_has_token(request) and os.environ.get("QUILLON_TEST") != "1":
+            return _finish(request, web.json_response({"error": "missing or invalid token"}, status=403))
         if request.method == "OPTIONS":
             response = web.Response(status=204)
         else:
@@ -310,9 +358,9 @@ class QuillonHBServer:
         if request.path != '/api/search/progress' and origin:
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Quillon-Token'
             response.headers['Vary'] = 'Origin'
-        return _harden_response(response, request.path)
+        return _finish(request, response)
 
     async def handle_home(self, request: Request) -> Response:
         """Serve home page - rendered through Jinja2 with PAGE_TYPE='home'."""
