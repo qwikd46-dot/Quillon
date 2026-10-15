@@ -85,12 +85,36 @@ class KeyManager:
         self._salt: Optional[bytes] = None
 
     def _load_or_create_salt(self) -> bytes:
-        """Load existing salt or generate new one."""
-        if PATHS.KEY_FILE.exists():
-            return bytes.fromhex(PATHS.KEY_FILE.read_text().strip())
+        """Load the existing salt or generate a new one.
+
+        The salt feeds the PBKDF2 derivation of the cookie/password key, so
+        it must never be readable by another user -- not even for the instant
+        between creating the file and chmod'ing it. It is written with
+        ``O_CREAT|O_EXCL|O_NOFOLLOW`` at mode 0600 so the process umask never
+        decides its permissions, and a pre-existing file is re-tightened to
+        0600 and refused if it is a symlink (writing through a symlink would
+        let a local attacker redirect the write to another file).
+        """
+        path = PATHS.KEY_FILE
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if path.is_symlink():
+            raise RuntimeError(f"key file {path} must not be a symlink")
+        if path.exists():
+            path.chmod(CRYPTO_CONFIG.KEY_FILE_PERMS)
+            return bytes.fromhex(path.read_text(encoding="ascii").strip())
         salt = os.urandom(CRYPTO_CONFIG.SALT_LENGTH)
-        PATHS.KEY_FILE.write_text(salt.hex())
-        PATHS.KEY_FILE.chmod(CRYPTO_CONFIG.KEY_FILE_PERMS)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(path, flags, CRYPTO_CONFIG.KEY_FILE_PERMS)
+        except FileExistsError:
+            path.chmod(CRYPTO_CONFIG.KEY_FILE_PERMS)
+            return bytes.fromhex(path.read_text(encoding="ascii").strip())
+        try:
+            os.write(fd, salt.hex().encode("ascii"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
         return salt
 
     def get_key(self) -> bytes:
