@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BFSB — Browser for Safe Browsing"""
+"""Quillon — Browser for Safe Browsing"""
 
 import sys
 import os
@@ -24,12 +24,12 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
 # ── Paths ──
-BFSB_DIR = Path.home() / ".bfsb"
-COOKIE_DB = BFSB_DIR / "cookies.enc"
-BLOCKLIST_DIR = BFSB_DIR / "blocklists"
-KEY_FILE = BFSB_DIR / ".hw-key"
-LOG_FILE = BFSB_DIR / "bfsb.log"
-BFSB_DIR.mkdir(exist_ok=True)
+QUILLON_DIR = Path.home() / ".quillon"
+COOKIE_DB = QUILLON_DIR / "cookies.enc"
+BLOCKLIST_DIR = QUILLON_DIR / "blocklists"
+KEY_FILE = QUILLON_DIR / ".hw-key"
+LOG_FILE = QUILLON_DIR / "quillon.log"
+QUILLON_DIR.mkdir(exist_ok=True)
 BLOCKLIST_DIR.mkdir(exist_ok=True)
 
 url_blocker = None
@@ -176,10 +176,10 @@ class SafePage(QWebEnginePage):
         pass
 
 # ── Browser ──
-class BFSB(QMainWindow):
+class Quillon(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("BFSB")
+        self.setWindowTitle("Quillon")
         self.resize(1400, 900)
         self.searx = "http://localhost:8888"
         self.tabs = []       # QWebEngineView list
@@ -187,7 +187,7 @@ class BFSB(QMainWindow):
         self.close_btns = [] # QPushButton list (x buttons)
 
         # Profile
-        self.profile = QWebEngineProfile("BFSB", self)
+        self.profile = QWebEngineProfile("Quillon", self)
         self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
         self.profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
         self.profile.setUrlRequestInterceptor(Interceptor(url_blocker))
@@ -494,12 +494,12 @@ class BFSB(QMainWindow):
         (function() {
             document.querySelectorAll('h1, h2, h3, .title, [class*="brand"]').forEach(function(el) {
                 if (el.textContent.toLowerCase().includes('searxng') || el.textContent.toLowerCase().includes('searx')) {
-                    el.textContent = 'BFSB';
+                    el.textContent = 'Quillon';
                 }
             });
-            if (!document.getElementById('bfsb-anim-style')) {
+            if (!document.getElementById('quillon-anim-style')) {
                 var style = document.createElement('style');
-                style.id = 'bfsb-anim-style';
+                style.id = 'quillon-anim-style';
                 style.textContent = `
                     .index img, .index [class*="logo"] {
                         transition: opacity 0.15s ease-out;
@@ -509,28 +509,28 @@ class BFSB(QMainWindow):
                         transition: transform 0.15s ease-out;
                         transform: translateY(0);
                     }
-                    body.bfsb-focused .index img,
-                    body.bfsb-focused img[alt="BFSB"] {
+                    body.quillon-focused .index img,
+                    body.quillon-focused img[alt="Quillon"] {
                         opacity: 0 !important;
                         pointer-events: none !important;
                     }
-                    body.bfsb-focused .index form,
-                    body.bfsb-focused #search,
-                    body.bfsb-focused .searchbox {
+                    body.quillon-focused .index form,
+                    body.quillon-focused #search,
+                    body.quillon-focused .searchbox {
                         transform: translateY(-120px) !important;
                     }
                 `;
                 document.head.appendChild(style);
             }
             var searchInput = document.querySelector('input[type="search"], input[name="q"], #search_input, .searchbox, #q');
-            if (searchInput && !searchInput._bfsbBound) {
-                searchInput._bfsbBound = true;
+            if (searchInput && !searchInput._quillonBound) {
+                searchInput._quillonBound = true;
                 searchInput.addEventListener('focus', function() {
-                    document.body.classList.add('bfsb-focused');
+                    document.body.classList.add('quillon-focused');
                 });
                 searchInput.addEventListener('blur', function() {
                     if (!this.value.trim()) {
-                        document.body.classList.remove('bfsb-focused');
+                        document.body.classList.remove('quillon-focused');
                     }
                 });
             }
@@ -548,26 +548,26 @@ class BFSB(QMainWindow):
         (function() {
             document.querySelectorAll('h1, h2, h3, .title, [class*="brand"]').forEach(function(el) {
                 if (el.textContent.toLowerCase().includes('searxng') || el.textContent.toLowerCase().includes('searx')) {
-                    el.textContent = 'BFSB';
+                    el.textContent = 'Quillon';
                 }
             });
-            if (!document.getElementById('bfsb-anim-style')) {
+            if (!document.getElementById('quillon-anim-style')) {
                 var style = document.createElement('style');
-                style.id = 'bfsb-anim-style';
+                style.id = 'quillon-anim-style';
                 style.textContent = `
                     .index img, .index [class*="logo"] { transition: opacity 0.15s ease-out; opacity: 1; }
                     .index form, #search, .searchbox { transition: transform 0.15s ease-out; transform: translateY(0); }
-                    body.bfsb-focused .index img, body.bfsb-focused img[alt="BFSB"] { opacity: 0 !important; pointer-events: none !important; }
-                    body.bfsb-focused .index form, body.bfsb-focused #search, body.bfsb-focused .searchbox { transform: translateY(-120px) !important; }
+                    body.quillon-focused .index img, body.quillon-focused img[alt="Quillon"] { opacity: 0 !important; pointer-events: none !important; }
+                    body.quillon-focused .index form, body.quillon-focused #search, body.quillon-focused .searchbox { transform: translateY(-120px) !important; }
                     #send_search, #clear_search { display: none !important; }
                 `;
                 document.head.appendChild(style);
             }
             var si = document.querySelector('input[type="search"], input[name="q"], #search_input, .searchbox, #q');
-            if (si && !si._bfsbBound) {
-                si._bfsbBound = true;
-                si.addEventListener('focus', function() { document.body.classList.add('bfsb-focused'); });
-                si.addEventListener('blur', function() { if (!this.value.trim()) document.body.classList.remove('bfsb-focused'); });
+            if (si && !si._quillonBound) {
+                si._quillonBound = true;
+                si.addEventListener('focus', function() { document.body.classList.add('quillon-focused'); });
+                si.addEventListener('blur', function() { if (!this.value.trim()) document.body.classList.remove('quillon-focused'); });
             }
         })();
         """
@@ -604,7 +604,7 @@ def main():
     url_blocker = URLBlocker()
     SafePage.blocker = url_blocker
     CookieVault()
-    log("BFSB starting")
+    log("Quillon starting")
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
@@ -616,9 +616,9 @@ def main():
     pal.setColor(QPalette.ColorRole.Highlight, QColor(15,52,96))
     app.setPalette(pal)
 
-    b = BFSB()
+    b = Quillon()
     b.show()
-    log("BFSB started")
+    log("Quillon started")
     sys.exit(app.exec())
 
 if __name__ == "__main__":

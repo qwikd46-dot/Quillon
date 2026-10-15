@@ -253,7 +253,7 @@ class Crawler:
 
     def __init__(
         self,
-        data_dir: Path = Path("/home/binwalk/Downloads/bfsb/data/crawled"),
+        data_dir: Path = Path("/home/binwalk/Downloads/Quillon/data/crawled"),
         user_agent: str = SECURITY_CONFIG.USER_AGENT,
         timeout: float = 10.0,
         max_concurrent: int = 2,

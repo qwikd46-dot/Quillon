@@ -95,10 +95,10 @@ policy. `pyflakes` filtered to non-style findings:
 
 ## 5. Repository hygiene
 
-- Tracked backup/scratch files: `bfsb.py.backup`, `quillon/ui/styles.py.backup`,
+- Tracked backup/scratch files: `quillon.py.backup`, `quillon/ui/styles.py.backup`,
   `quillon/ui/tabs.py.backup`, `quillon/ui/main_window.py.bak2` (11 bytes),
   `quillon/core/search/{crawl_runner,crawler,ranker}.py.bak-2026-07-29`,
-  and root-level `test_bfsb.py`, `test_browser.py`, `test_browser2.py`.
+  and root-level `test_quillon.py`, `test_browser.py`, `test_browser2.py`.
   `.gitignore` already excludes similar throwaway scripts; these slipped in.
 - The tree carries its own history as prose (`AGENT_PLAN.md`, `PERF_NOTES.md`,
   `docs/phase-N-design.md`, `THREAT_MODEL.md`, `problem_analysis.txt`,

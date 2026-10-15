@@ -43,7 +43,7 @@ Most of this suite historically asserted on *strings in source files*, which
 is how a two-day-old tab-switching bug survived a green run. Prefer tests
 that build real things:
 
-- build a real `BFSBWindow` and actually switch tabs
+- build a real `QuillonWindow` and actually switch tabs
 - spawn a real Node process and check it dies with its parent
 - start a real proxy and make a real request through it
 
@@ -53,7 +53,7 @@ evidence that it works.
 
 Be careful with tests that touch live state. Two have bitten before — a
 test that killed the user's running proxy, and one that migrated their real
-vault key. Sandbox anything that reaches the keyring, the port, or `~/.bfsb`.
+vault key. Sandbox anything that reaches the keyring, the port, or `~/.quillon`.
 
 ## Style
 
@@ -79,6 +79,5 @@ response.
 ## Reporting a bug
 
 What you did, what you expected, what happened, and the relevant log
-lines. `~/.bfsb/logs/ghostery-engine.log` and
-`~/.bfsb/proxy-startup.log` are the two that usually matter. Note that
-the data directory is now `~/.quillon` — the old `~/.bfsb` is legacy.
+lines. `~/.quillon/logs/ghostery-engine.log` and
+`~/.quillon/proxy-startup.log` are the two that usually matter.

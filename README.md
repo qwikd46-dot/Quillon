@@ -254,7 +254,7 @@ is no personal access token to configure and nothing secret in the repository.
 So a clone does not have to build 2 GB of image:
 
 ```bash
-podman pull ghcr.io/qwikd46-dot/Bfsb:main
+podman pull ghcr.io/qwikd46-dot/Quillon:main
 podman run --rm -it -e QUILLON_HEADLESS=1 quillon   # after `podman tag`
 ```
 

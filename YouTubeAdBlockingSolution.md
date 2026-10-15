@@ -74,7 +74,7 @@ if is_youtube_content and youtube_script:
 
 ## Implementation
 
-The fix has been implemented in `/home/binwalk/Downloads/bfsb/quillon/core/webengine.py`:
+The fix has been implemented in `/home/binwalk/Downloads/Quillon/quillon/core/webengine.py`:
 
 ### Changes Made:
 

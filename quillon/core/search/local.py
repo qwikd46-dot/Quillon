@@ -83,8 +83,8 @@ class LocalSearchEngine:
     and never reach out to any third party.
     """
 
-    DEFAULT_INDEX_DB = Path("/home/binwalk/Downloads/bfsb/data/index.db")
-    DEFAULT_CRAWLED_DIR = Path("/home/binwalk/Downloads/bfsb/data/crawled")
+    DEFAULT_INDEX_DB = Path("/home/binwalk/Downloads/Quillon/data/index.db")
+    DEFAULT_CRAWLED_DIR = Path("/home/binwalk/Downloads/Quillon/data/crawled")
 
     def __init__(
         self,
