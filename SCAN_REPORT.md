@@ -132,6 +132,12 @@ as needing an explicit user decision — worth confirming it is still intended.
 already far broader than the document describes; the document should be
 updated or removed to avoid mis-triaging future ad-block reports.
 
+The same drift appears in `README.md` (~line 346), which still states
+"199 tests" over a hand-written 17-module list; the suite is now 20 files and
+**227** tests. The hand-maintained count is exactly the failure mode
+`tests/README.md` warns about, and it should point at
+`scripts/run_unit_tests.py` instead of a number.
+
 ## 8. Recommendations (priority order)
 
 1. Delete the dead duplicate definitions and the unused `_chrome_walk` /
