@@ -37,16 +37,6 @@ class ToggleSwitch(QWidget):
     _THUMB = QColor("#ffffff")
     _FOCUS_RING = QColor(124, 108, 247, 90)
 
-    def __init__(self, checked: bool = False, parent=None) -> None:
-        super().__init__(parent)
-        self.setFixedSize(46, 26)
-        self._checked = checked
-        self._pos = 1.0 if checked else 0.0
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._anim = QPropertyAnimation(self, b"position", self)
-        self._anim.setDuration(180)
-
     def get_position(self) -> float:
         return self._pos
 

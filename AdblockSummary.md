@@ -26,7 +26,7 @@ The adblock system is fully functional and blocking ads. All checks pass:
 ### 4. Verification Commands
 ```bash
 # Test the blocker directly
-cd /home/binwalk/Downloads/bfsb
+cd /home/binwalk/Downloads/Quillon
 python3 -c "
 import sys
 sys.path.insert(0, '.')

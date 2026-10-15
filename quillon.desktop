@@ -4,18 +4,18 @@ Type=Application
 Name=Quillon
 GenericName=Safe Browser
 Comment=Quillon Browser — Local Metasearch, No Tracking
-Exec=/home/binwalk/Downloads/bfsb/quillon_launcher.sh
-Icon=/home/binwalk/Downloads/bfsb/quillon_icon.png
+Exec=/home/binwalk/Downloads/Quillon/quillon_launcher.sh
+Icon=/home/binwalk/Downloads/Quillon/quillon_icon.png
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 StartupWMClass=Quillon
-Path=/home/binwalk/Downloads/bfsb
+Path=/home/binwalk/Downloads/Quillon
 Keywords=browser;search;privacy;secure;metasearch;
 MimeType=text/html;text/xml;application/xhtml+xml;application/xml;x-scheme-handler/quillon;
 Actions=NewWindow;
 
 [Desktop Action NewWindow]
 Name=New Window
-Exec=/home/binwalk/Downloads/bfsb/quillon_launcher.sh
+Exec=/home/binwalk/Downloads/Quillon/quillon_launcher.sh
 

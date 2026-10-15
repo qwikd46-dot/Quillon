@@ -75,7 +75,7 @@ DEFAULT_SHORTCUTS: dict[str, str] = {
     "piped":         "http://127.0.0.1:8080",
     # --- Misc ---
     "hyprland":      "https://hypr.land",
-    "bfsb":          "https://github.com/JaKooLit/Arch-Hyprland",
+    "quillon":          "https://github.com/JaKooLit/Arch-Hyprland",
 }
 
 # Only keys with safe characters. Prevents malformed input from breaking lookup.

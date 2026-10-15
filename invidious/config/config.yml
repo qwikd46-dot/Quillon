@@ -374,8 +374,8 @@ redis:
 ##
 ## Instance settings
 ##
-instance_name: "BFSB Invidious"
-description: "Privacy-friendly YouTube frontend for BFSB browser"
+instance_name: "Quillon Invidious"
+description: "Privacy-friendly YouTube frontend for Quillon browser"
 contact_email: ""
 default_locale: "en"
 languages: ["en", "es", "fr", "de", "ru", "zh", "ja", "ko"]

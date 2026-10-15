@@ -23,7 +23,7 @@ async def main():
     subprocess.run(["pkill", "-9", "-f", "[b]fsb.main"], capture_output=True)
     time.sleep(2)
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QUILLON_TEST="1", PYTHONUNBUFFERED="1")
-    subprocess.Popen(["setsid", "python3", "-m", "quillon.main"], cwd="/home/binwalk/Downloads/bfsb",
+    subprocess.Popen(["setsid", "python3", "-m", "quillon.main"], cwd="/home/binwalk/Downloads/Quillon",
                      env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      stdin=subprocess.DEVNULL, start_new_session=True)
     for _ in range(120):

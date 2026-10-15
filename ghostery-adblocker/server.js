@@ -3,7 +3,7 @@
  * Ghostery AdBlocker Node server.
  *
  * Exposes the @ghostery/adblocker FiltersEngine via a tiny HTTP API so the
- * Python side of BFSB can query it for network filtering, cosmetic
+ * Python side of Quillon can query it for network filtering, cosmetic
  * injection, and scriptlet injection.
  *
  * Protocol:
@@ -33,8 +33,8 @@ function getScriptletForUrl(url) {
     if (!isYouTube) return '';
     return [
       "(function(){",
-      "  if(window.__bfsbYTScriptlet) return;",
-      "  window.__bfsbYTScriptlet=true;",
+      "  if(window.__quillonYTScriptlet) return;",
+      "  window.__quillonYTScriptlet=true;",
       "  var adSel=['.ytp-ad-module','.ytp-ad-player-overlay','.ytp-ad-overlay-container','.ytp-ad-overlay-slot','.ytp-ad-overlay-image','.ytp-ad-slot','.ytp-ad-text-slot','.ytp-ad-companion-slot','.ytp-ad-skip-button','.ytp-ad-skip-button-modern','.ytp-ad-player-overlay-skip-button','.ytp-ad-overlay-close-button','.ytp-ad-player-overlay-close-button','.videoAdUi','.adShowing','.ad-container','.ad-slot','.ytp-ad-interstitial','.ytp-ad-notification-container','.ytp-ad-preview-container','.ytp-ad-image-overlay','.ytp-ad-simple-ad-badge','ytd-promoted-sparkles-web-renderer','ytd-ad-slot-renderer','ytd-companion-slot-renderer','ytd-display-ad-renderer','ytd-in-feed-ad-layout-renderer','ytd-banner-promo-renderer','ytd-statement-banner-renderer','ytd-action-companion-ad-renderer','ytd-video-masthead-ad-primary-renderer','ytd-video-masthead-ad-advertiser-info-renderer','ytd-video-masthead-ad-video-renderer','ytd-search-pyv-renderer','ytd-reel-shelf-renderer','.masthead-ad-control'];",
       "  function rm(){for(var i=adSel.length-1;i>=0;i--){var e=document.querySelectorAll(adSel[i]);for(var j=0;j<e.length;j++){try{e[j].remove();}catch(err){}}}}",
       "  var v=document.querySelector('video');if(v){var f=function(){if(v.currentTime<v.duration){v.currentTime=v.duration}};v.addEventListener('adstart',f);v.addEventListener('adplaying',f);}}",

@@ -10,7 +10,7 @@ Schema:
     terms      — term PK, df (document frequency)
     postings   — (term, doc_id) PK, freq
 
-Storage: /home/binwalk/Downloads/bfsb/data/index.db
+Storage: /home/binwalk/Downloads/Quillon/data/index.db
 """
 
 from __future__ import annotations
@@ -87,8 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_postings_term ON postings(term);
 CREATE INDEX IF NOT EXISTS idx_postings_doc  ON postings(doc_id);
 """
 
-DEFAULT_DB_PATH = Path("/home/binwalk/Downloads/bfsb/data/index.db")
-DEFAULT_DATA_DIR = Path("/home/binwalk/Downloads/bfsb/data/crawled")
+DEFAULT_DB_PATH = Path("/home/binwalk/Downloads/Quillon/data/index.db")
+DEFAULT_DATA_DIR = Path("/home/binwalk/Downloads/Quillon/data/crawled")
 
 
 # --------------------------------------------------------------------------

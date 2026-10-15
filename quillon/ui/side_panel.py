@@ -652,8 +652,6 @@ class BookmarksPanel(QWidget):
 
         _SKIP_FOLDERS = {"Bookmarks Bar", "Other Bookmarks"}
 
-        all_count = len(self._store.list_all(limit=10000))
-
         folders = [
             (fid, fname)
             for fid, fname in self._store.list_folders()

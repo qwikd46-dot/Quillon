@@ -6,7 +6,7 @@ scores each document using Okapi BM25. Returns ranked hits.
 Pure-Python, no external deps. Talks to the SQLite index built by
 `quillon.core.search.indexer`.
 
-Storage: /home/binwalk/Downloads/bfsb/data/index.db (read-only from here).
+Storage: /home/binwalk/Downloads/Quillon/data/index.db (read-only from here).
 """
 
 from __future__ import annotations

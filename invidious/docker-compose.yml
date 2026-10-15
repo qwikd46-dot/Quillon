@@ -3,7 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: bfsb-invidious-postgres
+    container_name: quillon-invidious-postgres
     environment:
       POSTGRES_USER: invidious
       POSTGRES_PASSWORD: invidious
@@ -19,7 +19,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: bfsb-invidious-redis
+    container_name: quillon-invidious-redis
     volumes:
       - redis_data:/data
     healthcheck:
@@ -33,7 +33,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: bfsb-invidious
+    container_name: quillon-invidious
     volumes:
       - ./config/config.yml:/config.yml:ro
       - ./data:/invidious/data
